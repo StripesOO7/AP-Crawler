@@ -83,6 +83,15 @@ if __name__ == "__main__":
     cursor = db.cursor()
     create_table_if_needed(db, cursor)
     while True:
+
+        with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
+            for new_url in new_trackers.readlines():
+                cursor.execute(f"INSERT INTO Trackers VALUES ('{new_url}', '');")
+                print(f"added {new_url} to database")
+            db.commit()
+        with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
+            new_trackers.write("")
+
         timer = time.time()
 
         get_unfinished_seeds_querey = "SELECT URL FROM Trackers WHERE NOT finished = 'x';"
@@ -94,14 +103,6 @@ if __name__ == "__main__":
         for url in unfinished_seeds:
             push_to_db(db, cursor, url[0])
         print("time taken for total: ", time.time() - timer)
-        with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
-            for new_url in new_trackers.readlines():
-                cursor.execute(f"INSERT INTO Trackers VALUES ('{new_url}', '');")
-                print(f"added {new_url} to database")
-            db.commit()
-        with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
-            new_trackers.write("")
-
         print(f"sleeping for {int(60-(time.time() - timer))+1} seconds")
         time.sleep(int(60-(time.time() - timer))+1)
     db.close()
