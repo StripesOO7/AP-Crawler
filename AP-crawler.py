@@ -61,7 +61,7 @@ def push_to_db(db_connector, db_cursor, tracker_url):
     for index, data, in capture.items():
         querey = querey + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
                            f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
-                           f" {data['percentage']}),")
+                           f" {data['percentage']}, {data["connection_status"]}),")
     db_cursor.execute(querey[:-1])
 
     print("time taken for database push: ", time.time() - timer)
