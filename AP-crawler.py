@@ -2,6 +2,8 @@ import os.path
 import time
 from datetime import datetime
 import sqlite3
+from distutils.msvc9compiler import query_vcvarsall
+
 from requests import request
 from bs4 import BeautifulSoup as bs
 from bs4 import element
@@ -44,6 +46,11 @@ def crawl_tracker(tracker_url:str) -> dict[str, any]:
     for total_data in tracker_html.find('tfoot').contents[1].contents:
         if isinstance(total_data, element.Tag):
             tmp.append(total_data.get_text(strip=True))
+    total_check = tmp[3].split(' ')[0].split('/')
+    if total_check[0] == total_check[1]:
+        tmp[3] = 'Done'
+    else:
+        tmp[3] = 'Ongoing'
     add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
     return player_data_dict
@@ -55,13 +62,13 @@ def push_to_db(db_connector, db_cursor, tracker_url):
     print("time taken to capture: ", time.time() - timer)
 
     timer = time.time()
-    querey = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
+    query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
               'connection_status) VALUES ')
     for index, data, in capture.items():
-        querey = querey + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
+        query = query + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
                            f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
-                           f" {data['percentage']}, {data['connection_status']}),")
-    db_cursor.execute(querey[:-1])
+                           f" {data['percentage']}, '{data['connection_status']}'),")
+    db_cursor.execute(query[:-1])
 
     print("time taken for database push: ", time.time() - timer)
 
