@@ -78,7 +78,7 @@ def create_table_if_needed(db_connector, db_cursor):
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Trackers(url TEXT PRIMARY KEY , finished TEXT);")
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp REAL, number INTEGER, name TEXT, "
                       "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT) ")
-    db.commit()
+    db_connector.commit()
 
 
 if __name__ == "__main__":
@@ -88,12 +88,14 @@ if __name__ == "__main__":
     while True:
 
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
-            for new_url in new_trackers.readlines():
+            new_tracker_urls = new_trackers.readlines()
+            for new_url in new_tracker_urls:
                 cursor.execute(f"INSERT INTO Trackers VALUES ('{new_url}', '');")
                 print(f"added {new_url} to database")
             db.commit()
-        with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
-            new_trackers.write("")
+        if len(new_tracker_urls) > 0:
+            with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
+                new_trackers.write("")
 
         timer = time.time()
 
