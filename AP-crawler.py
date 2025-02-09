@@ -8,17 +8,19 @@ from bs4 import element
 '''
 CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT);
 CREATE TABLE Stats(url TEXT, timestamp REAL, number INTEGER, name TEXT, game_name TEXT, checks_done INTEGER, 
-checks_total INTEGER, percentage REAL) 
+checks_total INTEGER, percentage REAL, connection_status TEXT) 
 '''
 
 
 def add_playerinfo_to_dict(player_dict, info_list, timestamp):
     print(info_list)
+    exit()
     info_list[4] = info_list[4].split('/')
     player_dict[info_list[0]] = {
         'number': int(info_list[0]),
         'name': info_list[1].replace("'", "''"),
         'game_name': info_list[2].replace("'", "''"),
+        'connection_status': info_list[3],
         'checks_done': int(info_list[4][0]),
         'checks_total': int(info_list[4][1]),
         'percentage': float(info_list[5]),
@@ -54,7 +56,8 @@ def push_to_db(db_connector, db_cursor, tracker_url):
     print("time taken to capture: ", time.time() - timer)
 
     timer = time.time()
-    querey = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage) VALUES ')
+    querey = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
+              'connection_status) VALUES ')
     for index, data, in capture.items():
         querey = querey + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
                            f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
@@ -74,7 +77,7 @@ def push_to_db(db_connector, db_cursor, tracker_url):
 def create_table_if_needed(db_connector, db_cursor):
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Trackers(url TEXT PRIMARY KEY , finished TEXT);")
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp REAL, number INTEGER, name TEXT, "
-                      "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL) ")
+                      "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT) ")
     db.commit()
 
 
@@ -104,6 +107,6 @@ if __name__ == "__main__":
             push_to_db(db, cursor, url[0])
         print("time taken for total: ", time.time() - timer)
         print(f"sleeping for {int(60-(time.time() - timer))+1} seconds")
-        time.sleep(int(60-(time.time() - timer))+1)
+        time.sleep((int(60-(time.time() - timer))+1) or 0)
     db.close()
     print("connection closed")
