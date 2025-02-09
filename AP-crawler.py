@@ -108,7 +108,8 @@ if __name__ == "__main__":
         for url in unfinished_seeds:
             push_to_db(db, cursor, url[0])
         print("time taken for total: ", time.time() - timer)
-        print(f"sleeping for {int(60-(time.time() - timer))+1} seconds")
-        time.sleep((int(60-(time.time() - timer))+1) or 0)
+        sleep_time = (int(60 - (time.time() - timer)) + 1) or 0
+        print(f"sleeping for {sleep_time} seconds")
+        time.sleep(sleep_time)
     db.close()
     print("connection closed")
