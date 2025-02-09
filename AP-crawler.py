@@ -2,8 +2,6 @@ import os.path
 import time
 from datetime import datetime
 import sqlite3
-from distutils.msvc9compiler import query_vcvarsall
-
 from requests import request
 from bs4 import BeautifulSoup as bs
 from bs4 import element
