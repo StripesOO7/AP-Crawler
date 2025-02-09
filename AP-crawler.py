@@ -14,7 +14,6 @@ checks_total INTEGER, percentage REAL, connection_status TEXT)
 
 def add_playerinfo_to_dict(player_dict, info_list, timestamp):
     # print(info_list)
-    exit()
     info_list[4] = info_list[4].split('/')
     player_dict[info_list[0]] = {
         'number': int(info_list[0]),
