@@ -2,9 +2,11 @@ import os.path
 import time
 from datetime import datetime
 import sqlite3
+
 from requests import request
 from bs4 import BeautifulSoup as bs
 from bs4 import element
+
 '''
 CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT);
 CREATE TABLE Stats(url TEXT, timestamp REAL, number INTEGER, name TEXT, game_name TEXT, checks_done INTEGER, 
@@ -24,6 +26,19 @@ def add_playerinfo_to_dict(player_dict, info_list, timestamp):
         'checks_total': int(info_list[4][1]),
         'percentage': float(info_list[5]),
         'timestamp': timestamp
+    }
+
+def add_old_playerinfo_to_dict(player_dict, info_list):
+    # print(info_list)
+    player_dict[info_list[2]] = {
+        'number': int(info_list[2]),
+        'name': info_list[3].replace("'", "''"),
+        'game_name': info_list[4].replace("'", "''"),
+        'connection_status': info_list[8],
+        'checks_done': int(info_list[5]),
+        'checks_total': int(info_list[6]),
+        'percentage': float(info_list[7]),
+        'timestamp': info_list[1]
     }
 
 def crawl_tracker(tracker_url:str) -> dict[str, any]:
@@ -58,24 +73,35 @@ def push_to_db(db_connector, db_cursor, tracker_url):
     timer = time.time()
     capture = crawl_tracker(tracker_url)
     print("time taken to capture: ", time.time() - timer)
+    old_player_data = db_cursor.execute("SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number FROM Stats GROUP BY number) AS "
+               "Ts ON Stats.timestamp = Ts.time AND Stats.number = Ts.number").fetchall()
+    old_player_data_dict = {}
+    for row in old_player_data:
+        add_old_playerinfo_to_dict(old_player_data_dict,row)
+    # print(len(capture))
+    for index,_ in enumerate(old_player_data):
+        if old_player_data_dict[index]['checks_done'] == capture[f'{index}']["checks_done"]:
+            del capture[f'{index}']
+    # print(capture)
+    # print(len(capture))
+    if len(capture) > 0:
+        timer = time.time()
+        query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
+                  'connection_status) VALUES ')
+        for index, data, in capture.items():
+            query = query + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
+                               f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
+                               f" {data['percentage']}, '{data['connection_status']}'),")
+        db_cursor.execute(query[:-1])
 
-    timer = time.time()
-    query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
-              'connection_status) VALUES ')
-    for index, data, in capture.items():
-        query = query + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
-                           f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
-                           f" {data['percentage']}, '{data['connection_status']}'),")
-    db_cursor.execute(query[:-1])
-
-    print("time taken for database push: ", time.time() - timer)
+        print("time taken for database push: ", time.time() - timer)
 
 
-    if capture['0']["checks_done"] == capture['0']["checks_total"]:
-        db_cursor.execute(f"UPDATE Trackers SET finished = 'x' WHERE url = '{tracker_url}';")
-        print(f"Seed with Tracker at {tracker_url} has finished")
+        if capture['0']["checks_done"] == capture['0']["checks_total"]:
+            db_cursor.execute(f"UPDATE Trackers SET finished = 'x' WHERE url = '{tracker_url}';")
+            print(f"Seed with Tracker at {tracker_url} has finished")
 
-    db_connector.commit()
+        db_connector.commit()
     return
 
 def create_table_if_needed(db_connector, db_cursor):
