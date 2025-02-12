@@ -84,7 +84,7 @@ def push_to_db(db_connector, db_cursor, tracker_url):
             del capture[f'{index}']
     # print(capture)
     # print(len(capture))
-    if len(capture) > 0:
+    if capture:
         timer = time.time()
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                   'connection_status) VALUES ')
