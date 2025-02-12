@@ -73,14 +73,17 @@ def push_to_db(db_connector, db_cursor, tracker_url):
     timer = time.time()
     capture = crawl_tracker(tracker_url)
     print("time taken to capture: ", time.time() - timer)
-    old_player_data = db_cursor.execute("SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number FROM Stats GROUP BY number) AS "
-               "Ts ON Stats.timestamp = Ts.time AND Stats.number = Ts.number").fetchall()
+    old_player_data = db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, "
+                                        f"url FROM Stats WHERE url = '{tracker_url}' GROUP BY number) AS Ts ON "
+                                        "Stats.timestamp = Ts.time AND Stats.number = Ts.number AND Stats.url = "
+                                        "Ts.url").fetchall()
     old_player_data_dict = {}
     for row in old_player_data:
         add_old_playerinfo_to_dict(old_player_data_dict,row)
     # print(len(capture))
     for index,_ in enumerate(old_player_data):
-        if old_player_data_dict[index]['checks_done'] == capture[f'{index}']["checks_done"]:
+        if old_player_data_dict[index]['checks_done'] == capture[f'{index}']["checks_done"] and old_player_data_dict[
+            index]['connection_status'] == capture[f'{index}']["connection_status"]:
             del capture[f'{index}']
     # print(capture)
     # print(len(capture))
