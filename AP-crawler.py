@@ -28,6 +28,7 @@ def add_playerinfo_to_dict(player_dict, info_list, timestamp):
         'timestamp': timestamp
     }
 
+
 def add_old_playerinfo_to_dict(player_dict, info_list):
     # print(info_list)
     player_dict[info_list[2]] = {
@@ -41,7 +42,8 @@ def add_old_playerinfo_to_dict(player_dict, info_list):
         'timestamp': info_list[1]
     }
 
-def crawl_tracker(tracker_url:str) -> dict[str, any]:
+
+def crawl_tracker(tracker_url: str) -> dict[str, any]:
     tracker_page = request('get', tracker_url)
 
     tracker_html = bs(tracker_page.text, 'html.parser')
@@ -73,39 +75,43 @@ def push_to_db(db_connector, db_cursor, tracker_url):
     timer = time.time()
     capture = crawl_tracker(tracker_url)
     print("time taken to capture: ", time.time() - timer)
+    timer = time.time()
     old_player_data = db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, "
                                         f"url FROM Stats WHERE url = '{tracker_url}' GROUP BY number) AS Ts ON "
                                         "Stats.timestamp = Ts.time AND Stats.number = Ts.number AND Stats.url = "
                                         "Ts.url").fetchall()
+    print(f"time taken to fetch old data: {time.time() - timer}")
     old_player_data_dict = {}
     for row in old_player_data:
-        add_old_playerinfo_to_dict(old_player_data_dict,row)
+        add_old_playerinfo_to_dict(old_player_data_dict, row)
     # print(len(capture))
-    for index,_ in enumerate(old_player_data):
+    timer = time.time()
+    for index, _ in enumerate(old_player_data):
         if old_player_data_dict[index]['checks_done'] == capture[f'{index}']["checks_done"] and old_player_data_dict[
             index]['connection_status'] == capture[f'{index}']["connection_status"]:
             del capture[f'{index}']
+    print(f"time taken to compare old data to new data: {time.time() - timer}")
     # print(capture)
     # print(len(capture))
     if capture:
         timer = time.time()
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
-                  'connection_status) VALUES ')
+                 'connection_status) VALUES ')
         for index, data, in capture.items():
             query = query + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
-                               f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
-                               f" {data['percentage']}, '{data['connection_status']}'),")
+                             f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
+                             f" {data['percentage']}, '{data['connection_status']}'),")
         db_cursor.execute(query[:-1])
 
-        print("time taken for database push: ", time.time() - timer)
+        print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
-
-        if capture['0']["checks_done"] == capture['0']["checks_total"]:
+        if '0' in capture.keys() and capture['0']["checks_done"] == capture['0']["checks_total"]:
             db_cursor.execute(f"UPDATE Trackers SET finished = 'x' WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
 
-        db_connector.commit()
+    db_connector.commit()
     return
+
 
 def create_table_if_needed(db_connector, db_cursor):
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Trackers(url TEXT PRIMARY KEY , finished TEXT);")
@@ -137,12 +143,19 @@ if __name__ == "__main__":
         ongoing_seeds = len(unfinished_seeds)
         if ongoing_seeds == 0:
             break
-
+        print(f"crawling {len(unfinished_seeds)} Tracker(s).")
         for url in unfinished_seeds:
-            push_to_db(db, cursor, url[0])
+            try:
+                push_to_db(db, cursor, url[0])
+            except:
+                print(f"Error und push_to_db for URL {url[0]}")
+                db.close()
+                db = sqlite3.connect("AP-Crawler.db")
+                cursor = db.cursor()
+
         print("time taken for total: ", time.time() - timer)
-        sleep_time = (int(60 - (time.time() - timer)) + 1) or 0
+        sleep_time = (int(60 - (time.time() - timer)) + 1)
         print(f"sleeping for {sleep_time} seconds")
-        time.sleep(sleep_time)
+        time.sleep(sleep_time if sleep_time > 0 else 0)
     db.close()
     print("connection closed")
