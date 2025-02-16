@@ -8,16 +8,17 @@ from bs4 import BeautifulSoup as bs
 from bs4 import element
 
 '''
-CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT);
+CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT, spreadsheet TEXT);
 CREATE TABLE Stats(url TEXT, timestamp REAL, number INTEGER, name TEXT, game_name TEXT, checks_done INTEGER, 
 checks_total INTEGER, percentage REAL, connection_status TEXT) 
 '''
 
 
-def add_playerinfo_to_dict(player_dict, info_list, timestamp):
+def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
     # print(info_list)
     info_list[4] = info_list[4].split('/')
-    player_dict[info_list[0]] = {
+    info_list[6] = int(float(info_list[6]))
+    player_dict[int(info_list[0])] = {
         'number': int(info_list[0]),
         'name': info_list[1].replace("'", "''"),
         'game_name': info_list[2].replace("'", "''"),
@@ -29,7 +30,7 @@ def add_playerinfo_to_dict(player_dict, info_list, timestamp):
     }
 
 
-def add_old_playerinfo_to_dict(player_dict, info_list):
+def add_old_playerinfo_to_dict(player_dict, info_list) -> None:
     # print(info_list)
     player_dict[info_list[2]] = {
         'number': int(info_list[2]),
@@ -43,7 +44,7 @@ def add_old_playerinfo_to_dict(player_dict, info_list):
     }
 
 
-def crawl_tracker(tracker_url: str) -> dict[str, any]:
+def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
     tracker_page = request('get', tracker_url)
 
     tracker_html = bs(tracker_page.text, 'html.parser')
@@ -57,7 +58,7 @@ def crawl_tracker(tracker_url: str) -> dict[str, any]:
                 tmp.append(player_data.get_text(strip=True))
         add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
-    tmp = ['0']
+    tmp = [0]
     for total_data in tracker_html.find('tfoot').contents[1].contents:
         if isinstance(total_data, element.Tag):
             tmp.append(total_data.get_text(strip=True))
@@ -71,7 +72,15 @@ def crawl_tracker(tracker_url: str) -> dict[str, any]:
     return player_data_dict
 
 
-def push_to_db(db_connector, db_cursor, tracker_url):
+def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
+    '''
+
+    :param db_connector:
+    :param db_cursor:
+    :param tracker_url: URL for the AP-Multitracker Pageto crawl the information
+    :param spreadsheet: URL for possible target to push the data into. meant for the big asyncs spreadsheet. normally empty
+    :return:
+    '''
     timer = time.time()
     capture = crawl_tracker(tracker_url)
     print("time taken to capture: ", time.time() - timer)
@@ -87,9 +96,9 @@ def push_to_db(db_connector, db_cursor, tracker_url):
     # print(len(capture))
     timer = time.time()
     for index, _ in enumerate(old_player_data):
-        if old_player_data_dict[index]['checks_done'] == capture[f'{index}']["checks_done"] and old_player_data_dict[
-            index]['connection_status'] == capture[f'{index}']["connection_status"]:
-            del capture[f'{index}']
+        if old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and old_player_data_dict[
+            index]['connection_status'] == capture[index]["connection_status"]:
+            del capture[index]
     print(f"time taken to compare old data to new data: {time.time() - timer}")
     # print(capture)
     # print(len(capture))
@@ -105,7 +114,7 @@ def push_to_db(db_connector, db_cursor, tracker_url):
 
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
-        if '0' in capture.keys() and capture['0']["checks_done"] == capture['0']["checks_total"]:
+        if 0 in capture.keys() and capture[0]["checks_done"] == capture[0]["checks_total"]:
             db_cursor.execute(f"UPDATE Trackers SET finished = 'x' WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
 
@@ -143,7 +152,7 @@ if __name__ == "__main__":
         ongoing_seeds = len(unfinished_seeds)
         if ongoing_seeds == 0:
             break
-        print(f"crawling {len(unfinished_seeds)} Tracker(s).")
+        print(f"crawling {ongoing_seeds} Tracker{'s' if ongoing_seeds > 1 else ''}.")
         for url in unfinished_seeds:
             try:
                 push_to_db(db, cursor, url[0])
