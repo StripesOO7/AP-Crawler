@@ -26,7 +26,8 @@ def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
         'checks_done': int(info_list[4][0]),
         'checks_total': int(info_list[4][1]),
         'percentage': float(info_list[5]),
-        'timestamp': timestamp
+        'timestamp': timestamp,
+        'last_activity': f'{info_list[6]//3600}:{(info_list[6]//60) % 60}'
     }
 
 
