@@ -1,16 +1,16 @@
 import os.path
 import time
-from datetime import datetime
-import sqlite3
+from datetime import datetime, timezone
+import psycopg2
 
 from requests import request
 from bs4 import BeautifulSoup as bs
 from bs4 import element
 
 '''
-CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT, spreadsheet TEXT);
-CREATE TABLE Stats(url TEXT, timestamp REAL, number INTEGER, name TEXT, game_name TEXT, checks_done INTEGER, 
-checks_total INTEGER, percentage REAL, connection_status TEXT) 
+CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time TIMESTAMP WITH TIME ZONE, end_time TIMESTAMP WITH TIME ZONE);
+CREATE TABLE Stats(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT, 
+checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);
 '''
 
 
@@ -50,7 +50,7 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
 
     tracker_html = bs(tracker_page.text, 'html.parser')
 
-    timestamp = datetime.timestamp(datetime.now())
+    timestamp = datetime.now(timezone.utc)
     player_data_dict = {}
     for player in tracker_html.find('tbody').contents:
         tmp = []
@@ -68,6 +68,7 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
         tmp[3] = 'Done'
     else:
         tmp[3] = 'Ongoing'
+    tmp[6] = 0.0
     add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
     return player_data_dict
@@ -86,17 +87,21 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     capture = crawl_tracker(tracker_url)
     print("time taken to capture: ", time.time() - timer)
     timer = time.time()
-    old_player_data = db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, "
-                                        f"url FROM Stats WHERE url = '{tracker_url}' GROUP BY number) AS Ts ON "
-                                        "Stats.timestamp = Ts.time AND Stats.number = Ts.number AND Stats.url = "
-                                        "Ts.url").fetchall()
+    # db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, FROM Stats WHERE url = "
+    #                   f"'{tracker_url}' GROUP BY number) AS Ts ON Stats.timestamp = Ts.time AND Stats.number = "
+    #                   f"Ts.number AND Stats.url = Ts.url")
+    db_cursor.execute(f"SELECT * FROM Stats LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+                      f"url AS ts_url FROM Stats WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
+                      f"Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number AND Stats.url = Ts.ts_url")
+
+    old_player_data = db_cursor.fetchall()
     print(f"time taken to fetch old data: {time.time() - timer}")
     old_player_data_dict = {}
     for row in old_player_data:
         add_old_playerinfo_to_dict(old_player_data_dict, row)
     # print(len(capture))
     timer = time.time()
-    for index, _ in enumerate(old_player_data):
+    for index, _ in enumerate(old_player_data_dict):
         if old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and old_player_data_dict[
             index]['connection_status'] == capture[index]["connection_status"]:
             del capture[index]
@@ -108,7 +113,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                  'connection_status) VALUES ')
         for index, data, in capture.items():
-            query = query + (f"({data['timestamp']}, '{tracker_url}', {data['number']}, '{data['name']}', "
+            query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
                              f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
                              f" {data['percentage']}, '{data['connection_status']}'),")
         db_cursor.execute(query[:-1])
@@ -116,7 +121,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
         if 0 in capture.keys() and capture[0]["checks_done"] == capture[0]["checks_total"]:
-            db_cursor.execute(f"UPDATE Trackers SET finished = 'x' WHERE url = '{tracker_url}';")
+            db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = {time.time()} WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
 
     db_connector.commit()
@@ -124,14 +129,21 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
 
 
 def create_table_if_needed(db_connector, db_cursor):
-    db_cursor.execute("CREATE TABLE IF NOT EXISTS Trackers(url TEXT PRIMARY KEY , finished TEXT);")
-    db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp REAL, number INTEGER, name TEXT, "
-                      "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT) ")
+    db_cursor.execute("CREATE TABLE IF NOT EXISTS Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time "
+                      "TIMESTAMPTZ, end_time TIMESTAMPTZ);")
+    db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp TIMESTAMPTZ, number INTEGER, name TEXT, "
+                      "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status "
+                      "TEXT);")
     db_connector.commit()
 
 
 if __name__ == "__main__":
-    db = sqlite3.connect("AP-Crawler.db")
+    db =  psycopg2.connect(dbname="",
+                           user="",
+                           password="",
+                           host="",
+                           port="")
+    # db = sqlite3.connect("AP-Crawler.db")
     cursor = db.cursor()
     create_table_if_needed(db, cursor)
     while True:
@@ -139,8 +151,8 @@ if __name__ == "__main__":
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
             for new_url in new_tracker_urls:
-                cursor.execute(f"INSERT INTO Trackers VALUES ('{new_url}', '');")
-                print(f"added {new_url} to database")
+                cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', {time.time()});")
+                print(f"added {new_url.rstrip()} to database")
             db.commit()
         if len(new_tracker_urls) > 0:
             with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
@@ -148,8 +160,9 @@ if __name__ == "__main__":
 
         timer = time.time()
 
-        get_unfinished_seeds_querey = "SELECT URL FROM Trackers WHERE NOT finished = 'x';"
-        unfinished_seeds = cursor.execute(get_unfinished_seeds_querey).fetchall()
+        get_unfinished_seeds_querey = "SELECT URL FROM Trackers WHERE COALESCE(finished, '') = '';"
+        cursor.execute(get_unfinished_seeds_querey)
+        unfinished_seeds = cursor.fetchall()
         ongoing_seeds = len(unfinished_seeds)
         if ongoing_seeds == 0:
             break
@@ -160,7 +173,12 @@ if __name__ == "__main__":
             except:
                 print(f"Error und push_to_db for URL {url[0]}")
                 db.close()
-                db = sqlite3.connect("AP-Crawler.db")
+                db = psycopg2.connect(dbname="",
+                                      user="",
+                                      password="",
+                                      host="",
+                                      port="")
+                # db = sqlite3.connect("AP-Crawler.db")
                 cursor = db.cursor()
 
         print("time taken for total: ", time.time() - timer)
@@ -169,3 +187,5 @@ if __name__ == "__main__":
         time.sleep(sleep_time if sleep_time > 0 else 0)
     db.close()
     print("connection closed")
+
+# https://docs.google.com/spreadsheets/d/16dS6P6IV7a1jN9QzUkySEPSbqXUw4rb0-yYtqcdKk0Y/ copy of big async sheet
