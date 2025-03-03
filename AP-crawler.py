@@ -2,10 +2,10 @@ import os.path
 import time
 from datetime import datetime, timezone
 import psycopg2
+import sqlite3
 
 from requests import request
-from bs4 import BeautifulSoup as bs
-from bs4 import element
+from bs4 import BeautifulSoup as bs, element
 
 '''
 CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time TIMESTAMP WITH TIME ZONE, end_time TIMESTAMP WITH TIME ZONE);
@@ -105,6 +105,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         if old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and old_player_data_dict[
             index]['connection_status'] == capture[index]["connection_status"]:
             del capture[index]
+
     print(f"time taken to compare old data to new data: {time.time() - timer}")
     # print(capture)
     # print(len(capture))
@@ -113,6 +114,14 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                  'connection_status) VALUES ')
         for index, data, in capture.items():
+            if old_player_data_dict and (data['timestamp'] - old_player_data_dict[index]['timestamp']).seconds > 0:
+            # if old_player_data_dict and (data['timestamp'] - datetime.fromtimestamp(old_player_data_dict[index][
+            #                                                                             'timestamp'], timezone.utc)).seconds > 0:
+                query = query + (
+                    f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-60}', '{tracker_url}', {old_player_data_dict[index]['number']}, "
+                    f"'{old_player_data_dict[index]['name']}', "
+                    f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
+                    f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
             query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
                              f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
                              f" {data['percentage']}, '{data['connection_status']}'),")
