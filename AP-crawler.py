@@ -1,6 +1,6 @@
 import os.path
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import psycopg2
 import sqlite3
 
@@ -17,7 +17,7 @@ checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TE
 def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
     # print(info_list)
     info_list[4] = info_list[4].split('/')
-    info_list[6] = int(float(info_list[6]))
+    info_list[6] = 0 if info_list[6] == "None" else int(float(info_list[6]))
     player_dict[int(info_list[0])] = {
         'number': int(info_list[0]),
         'name': info_list[1].replace("'", "''"),
@@ -92,7 +92,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     #                   f"Ts.number AND Stats.url = Ts.url")
     db_cursor.execute(f"SELECT * FROM Stats LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
                       f"url AS ts_url FROM Stats WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
-                      f"Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number AND Stats.url = Ts.ts_url")
+                      f"Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number AND Stats.url = Ts.ts_url WHERE "
+                      f"Stats.url = '{tracker_url}'")
 
     old_player_data = db_cursor.fetchall()
     print(f"time taken to fetch old data: {time.time() - timer}")
@@ -118,7 +119,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
             # if old_player_data_dict and (data['timestamp'] - datetime.fromtimestamp(old_player_data_dict[index][
             #                                                                             'timestamp'], timezone.utc)).seconds > 0:
                 query = query + (
-                    f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-60}', '{tracker_url}', {old_player_data_dict[index]['number']}, "
+                    f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
+                    f" {old_player_data_dict[index]['number']}, "
                     f"'{old_player_data_dict[index]['name']}', "
                     f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
                     f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
@@ -130,7 +132,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
         if 0 in capture.keys() and capture[0]["checks_done"] == capture[0]["checks_total"]:
-            db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = {time.time()} WHERE url = '{tracker_url}';")
+            db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = {datetime.now(timezone.utc)} WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
 
     db_connector.commit()
@@ -160,7 +162,7 @@ if __name__ == "__main__":
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
             for new_url in new_tracker_urls:
-                cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', {time.time()});")
+                cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', {datetime.now(timezone.utc)});")
                 print(f"added {new_url.rstrip()} to database")
             db.commit()
         if len(new_tracker_urls) > 0:
