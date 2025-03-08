@@ -135,7 +135,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
 
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
-        if 0 in capture.keys() and capture[0]["checks_done"] == capture[0]["checks_total"]:
+        if 0 in capture.keys() and (capture[0]["checks_done"] == capture[0]["checks_total"] or capture[0][
+            "connection_status"] == "Done"):
             db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
                               f"{datetime.now(pytz_timezone('Europe/Berlin'))} WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
