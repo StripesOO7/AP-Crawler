@@ -1,8 +1,9 @@
 import os.path
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import psycopg2
 import sqlite3
+from pytz import timezone as pytz_timezone
 
 from requests import request
 from bs4 import BeautifulSoup as bs, element
@@ -50,7 +51,7 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
 
     tracker_html = bs(tracker_page.text, 'html.parser')
 
-    timestamp = datetime.now(timezone.utc)
+    timestamp = datetime.now(pytz_timezone('Europe/Berlin'))
     player_data_dict = {}
     for player in tracker_html.find('tbody').contents:
         tmp = []
@@ -117,7 +118,10 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         for index, data, in capture.items():
             if old_player_data_dict and (data['timestamp'] - old_player_data_dict[index]['timestamp']).seconds > 0:
             # if old_player_data_dict and (data['timestamp'] - datetime.fromtimestamp(old_player_data_dict[index][
-            #                                                                             'timestamp'], timezone.utc)).seconds > 0:
+            #                                                                             'timestamp'],
+            #                                                                             pytz_timezone(
+            #                                                                             'Europe/Berlin'))).seconds
+            #                                                                             > 0:
                 query = query + (
                     f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
                     f" {old_player_data_dict[index]['number']}, "
@@ -132,7 +136,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
         if 0 in capture.keys() and capture[0]["checks_done"] == capture[0]["checks_total"]:
-            db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = {datetime.now(timezone.utc)} WHERE url = '{tracker_url}';")
+            db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+                              f"{datetime.now(pytz_timezone('Europe/Berlin'))} WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
 
     db_connector.commit()
@@ -162,7 +167,8 @@ if __name__ == "__main__":
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
             for new_url in new_tracker_urls:
-                cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', {datetime.now(timezone.utc)});")
+                cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', "
+                               f"{datetime.now(pytz_timezone('Europe/Berlin'))});")
                 print(f"added {new_url.rstrip()} to database")
             db.commit()
         if len(new_tracker_urls) > 0:
