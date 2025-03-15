@@ -237,9 +237,18 @@ if __name__ == "__main__":
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
             for new_url in new_tracker_urls:
-                cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', "
-                               f"{datetime.now(pytz_timezone('Europe/Berlin'))});")
-                print(f"added {new_url.rstrip()} to database")
+                if "/room/" in new_url:
+                    room_page = request('get', "https://archipelago.gg/room/vJ66m0maRH6WOP6IqOZIVA")
+
+                    room_html = bs(room_page.text, 'html.parser')
+                    room_info = room_html.find("span", id="host-room-info").contents
+                    new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
+                if "/tracker/" in new_url:
+                    cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', "
+                                   f"{datetime.now(pytz_timezone('Europe/Berlin'))});")
+                    print(f"added {new_url.rstrip()} to database")
+                else:
+                    print("no valid tracking link found")
             db.commit()
         if len(new_tracker_urls) > 0:
             with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
