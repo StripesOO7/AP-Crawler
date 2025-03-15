@@ -12,6 +12,9 @@ from bs4 import BeautifulSoup as bs, element
 CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time TIMESTAMP WITH TIME ZONE, end_time TIMESTAMP WITH TIME ZONE);
 CREATE TABLE Stats(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT, 
 checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);
+CREATE TABLE Stats_Total(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT, 
+games_done INTEGER, games_total INTEGER, checks_done INTEGER, checks_total INTEGER, percentage REAL, 
+connection_status TEXT);
 '''
 
 
@@ -28,11 +31,13 @@ def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
         'checks_total': int(info_list[4][1]),
         'percentage': float(info_list[5]),
         'timestamp': timestamp,
-        'last_activity': f'{info_list[6]//3600}:{(info_list[6]//60) % 60}'
+        'last_activity': f'{info_list[6]//3600}:{(info_list[6]//60) % 60}',
+        'games_done': int(info_list[7][0]),
+        'games_total': int(info_list[7][1]),
     }
 
 
-def add_old_playerinfo_to_dict(player_dict, info_list) -> None:
+def add_old_playerinfo_to_dict(player_dict, info_list, total:bool) -> None:
     # print(info_list)
     player_dict[info_list[2]] = {
         'number': int(info_list[2]),
@@ -42,8 +47,15 @@ def add_old_playerinfo_to_dict(player_dict, info_list) -> None:
         'checks_done': int(info_list[5]),
         'checks_total': int(info_list[6]),
         'percentage': float(info_list[7]),
-        'timestamp': info_list[1]
+        'timestamp': info_list[1],
+        # 'games_done': int(info_list[9][0]),
+        # 'games_total': int(info_list[9][1]),
     }
+    if total == True:
+        player_dict['games_done']= int(info_list[9][0])
+        player_dict['games_total']= int(info_list[9][1])
+
+
 
 
 def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
@@ -58,6 +70,7 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
         for player_data in player.contents:
             if isinstance(player_data, element.Tag):
                 tmp.append(player_data.get_text(strip=True))
+        tmp.append(['0','0'])
         add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
     tmp = [0]
@@ -70,6 +83,7 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
     else:
         tmp[3] = 'Ongoing'
     tmp[6] = 0.0
+    tmp.append(total_check)
     add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
     return player_data_dict
@@ -100,8 +114,16 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     print(f"time taken to fetch old data: {time.time() - timer}")
     old_player_data_dict = {}
     for row in old_player_data:
-        add_old_playerinfo_to_dict(old_player_data_dict, row)
+        add_old_playerinfo_to_dict(old_player_data_dict, row, False)
     # print(len(capture))
+    db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+                      f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
+                      f"Stats_Total.timestamp = Ts.time AND Stats_Total.number = Ts.ts_number AND Stats_Total.url = "
+                      f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}'")
+    old_total_data = db_cursor.fetchall()
+    for row in old_total_data:
+        add_old_playerinfo_to_dict(old_player_data_dict, row, True)
+
     timer = time.time()
     for index, _ in enumerate(old_player_data_dict):
         if old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and old_player_data_dict[
@@ -115,23 +137,42 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         timer = time.time()
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                  'connection_status) VALUES ')
+        query_total = ('INSERT INTO Stats_total (timestamp, url, number, name, game_name, games_done, '
+                       'games_total checks_done, checks_total, percentage, connection_status) VALUES ')
         for index, data, in capture.items():
-            if old_player_data_dict and (data['timestamp'] - old_player_data_dict[index]['timestamp']).seconds > 0:
+            if old_player_data_dict and (data['timestamp'] - old_player_data_dict[index]['timestamp']).seconds > 300:
             # if old_player_data_dict and (data['timestamp'] - datetime.fromtimestamp(old_player_data_dict[index][
             #                                                                             'timestamp'],
             #                                                                             pytz_timezone(
             #                                                                             'Europe/Berlin'))).seconds
             #                                                                             > 0:
-                query = query + (
-                    f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
-                    f" {old_player_data_dict[index]['number']}, "
-                    f"'{old_player_data_dict[index]['name']}', "
-                    f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
-                    f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
-            query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
-                             f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']},"
-                             f" {data['percentage']}, '{data['connection_status']}'),")
+                if data['name'] == "Total":  # total
+                    query_total = query_total + (
+                        f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
+                        f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
+                        f"'{old_player_data_dict[index]['game_name']}', "
+                        f" {old_player_data_dict[index]['games_done']}, {old_player_data_dict[index]['games_total']},"
+                        f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
+                        f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
+                else:  # players
+                    query = query + (
+                        f"(TIMESTAMP '{old_player_data_dict[index]['timestamp'] - timedelta(minutes=1)}', '{tracker_url}',"
+                        f" {old_player_data_dict[index]['number']}, "
+                        f"'{old_player_data_dict[index]['name']}', "
+                        f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
+                        f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
+            if data['name'] == "Total": # total
+                query_total = query_total + (
+                    f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
+                    f"'{data['game_name']}', {data['games_done']}, {data['games_total']},"
+                    f"{data['checks_done']}, {data['checks_total']},"
+                    f"{data['percentage']}, '{data['connection_status']}'),")
+            else: # players
+                query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
+                                 f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
+                                 f"{data['percentage']}, '{data['connection_status']}'),")
         db_cursor.execute(query[:-1])
+        db_cursor.execute(query_total[:-1])
 
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
