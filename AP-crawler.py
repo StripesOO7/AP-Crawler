@@ -32,12 +32,28 @@ def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
         'percentage': float(info_list[5]),
         'timestamp': timestamp,
         'last_activity': f'{info_list[6]//3600}:{(info_list[6]//60) % 60}',
+    }
+
+def add_totalinfo_to_dict(player_dict, info_list, timestamp) -> None:
+    # print(info_list)
+    info_list[4] = info_list[4].split('/')
+    info_list[6] = 0 if info_list[6] == "None" else int(float(info_list[6]))
+    player_dict[int(info_list[0])] = {
+        'number': int(info_list[0]),
+        'name': info_list[1].replace("'", "''"),
+        'game_name': info_list[2].replace("'", "''"),
+        'connection_status': info_list[3],
+        'checks_done': int(info_list[4][0]),
+        'checks_total': int(info_list[4][1]),
+        'percentage': float(info_list[5]),
+        'timestamp': timestamp,
+        'last_activity': f'{info_list[6] // 3600}:{(info_list[6] // 60) % 60}',
         'games_done': int(info_list[7][0]),
         'games_total': int(info_list[7][1]),
     }
 
 
-def add_old_playerinfo_to_dict(player_dict, info_list, total:bool) -> None:
+def add_old_playerinfo_to_dict(player_dict, info_list) -> None:
     # print(info_list)
     player_dict[info_list[2]] = {
         'number': int(info_list[2]),
@@ -48,13 +64,22 @@ def add_old_playerinfo_to_dict(player_dict, info_list, total:bool) -> None:
         'checks_total': int(info_list[6]),
         'percentage': float(info_list[7]),
         'timestamp': info_list[1],
-        # 'games_done': int(info_list[9][0]),
-        # 'games_total': int(info_list[9][1]),
     }
-    if total == True:
-        player_dict['games_done']= int(info_list[9][0])
-        player_dict['games_total']= int(info_list[9][1])
 
+def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
+    # print(info_list)
+    player_dict[info_list[2]] = {
+        'number': int(info_list[2]),
+        'name': info_list[3].replace("'", "''"),
+        'game_name': info_list[4].replace("'", "''"),
+        'connection_status': info_list[10],
+        'checks_done': int(info_list[7]),
+        'checks_total': int(info_list[8]),
+        'percentage': float(info_list[9]),
+        'timestamp': info_list[1],
+        'games_done': int(info_list[5]),
+        'games_total': int(info_list[6]),
+    }
 
 
 
@@ -70,7 +95,6 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
         for player_data in player.contents:
             if isinstance(player_data, element.Tag):
                 tmp.append(player_data.get_text(strip=True))
-        tmp.append(['0','0'])
         add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
     tmp = [0]
@@ -84,7 +108,7 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
         tmp[3] = 'Ongoing'
     tmp[6] = 0.0
     tmp.append(total_check)
-    add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
+    add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
 
     return player_data_dict
 
@@ -114,7 +138,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     print(f"time taken to fetch old data: {time.time() - timer}")
     old_player_data_dict = {}
     for row in old_player_data:
-        add_old_playerinfo_to_dict(old_player_data_dict, row, False)
+        add_old_playerinfo_to_dict(old_player_data_dict, row)
     # print(len(capture))
     db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
                       f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
@@ -122,7 +146,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
                       f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}'")
     old_total_data = db_cursor.fetchall()
     for row in old_total_data:
-        add_old_playerinfo_to_dict(old_player_data_dict, row, True)
+        add_old_totalinfo_to_dict(old_player_data_dict, row)
 
     timer = time.time()
     for index, _ in enumerate(old_player_data_dict):
@@ -138,7 +162,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                  'connection_status) VALUES ')
         query_total = ('INSERT INTO Stats_total (timestamp, url, number, name, game_name, games_done, '
-                       'games_total checks_done, checks_total, percentage, connection_status) VALUES ')
+                       'games_total, checks_done, checks_total, percentage, connection_status) VALUES ')
         for index, data, in capture.items():
             if old_player_data_dict and (data['timestamp'] - old_player_data_dict[index]['timestamp']).seconds > 300:
             # if old_player_data_dict and (data['timestamp'] - datetime.fromtimestamp(old_player_data_dict[index][
@@ -151,7 +175,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
                         f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
                         f"'{old_player_data_dict[index]['game_name']}', "
-                        f" {old_player_data_dict[index]['games_done']}, {old_player_data_dict[index]['games_total']},"
+                        f" 12,"
+                        f" 33,"
                         f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
                         f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
                 else:  # players
@@ -192,6 +217,9 @@ def create_table_if_needed(db_connector, db_cursor):
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp TIMESTAMPTZ, number INTEGER, name TEXT, "
                       "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status "
                       "TEXT);")
+    db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp TIMESTAMPTZ, number INTEGER, name TEXT, "
+                      "game_name TEXT, games_done INTEGER, games_total INTEGER, checks_done INTEGER, checks_total "
+                      "INTEGER, percentage REAL, connection_status TEXT);")
     db_connector.commit()
 
 
