@@ -158,6 +158,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     # print(capture)
     # print(len(capture))
     if capture:
+        push_total = False
         timer = time.time()
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                  'connection_status) VALUES ')
@@ -179,6 +180,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
                         f" 33,"
                         f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
                         f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
+                    push_total = True
                 else:  # players
                     query = query + (
                         f"(TIMESTAMP '{old_player_data_dict[index]['timestamp'] - timedelta(minutes=1)}', '{tracker_url}',"
@@ -196,8 +198,9 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
                 query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
                                  f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
                                  f"{data['percentage']}, '{data['connection_status']}'),")
+        if push_total:
+            db_cursor.execute(query_total[:-1])
         db_cursor.execute(query[:-1])
-        db_cursor.execute(query_total[:-1])
 
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
@@ -245,7 +248,7 @@ if __name__ == "__main__":
                     new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
                 if "/tracker/" in new_url:
                     cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', "
-                                   f"{datetime.now(pytz_timezone('Europe/Berlin'))});")
+                                   f"TIMESTAMP '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
                     print(f"added {new_url.rstrip()} to database")
                 else:
                     print("no valid tracking link found")
