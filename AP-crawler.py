@@ -176,8 +176,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
                         f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
                         f"'{old_player_data_dict[index]['game_name']}', "
-                        f" 12,"
-                        f" 33,"
+                        f" {old_player_data_dict[index]['games_done']},"
+                        f" {old_player_data_dict[index]['games_total']},"
                         f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
                         f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
                     push_total = True
