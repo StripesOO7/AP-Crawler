@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import psycopg2
 import sqlite3
 from pytz import timezone as pytz_timezone
-
+import logging
 from requests import request
 from bs4 import BeautifulSoup as bs, element
 
@@ -159,6 +159,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     # print(len(capture))
     if capture:
         push_total = False
+        push_player = False
         timer = time.time()
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                  'connection_status) VALUES ')
@@ -180,7 +181,6 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
                         f" 33,"
                         f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
                         f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
-                    push_total = True
                 else:  # players
                     query = query + (
                         f"(TIMESTAMP '{old_player_data_dict[index]['timestamp'] - timedelta(minutes=1)}', '{tracker_url}',"
@@ -194,13 +194,16 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
                     f"'{data['game_name']}', {data['games_done']}, {data['games_total']},"
                     f"{data['checks_done']}, {data['checks_total']},"
                     f"{data['percentage']}, '{data['connection_status']}'),")
+                push_total = True
             else: # players
                 query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
                                  f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
                                  f"{data['percentage']}, '{data['connection_status']}'),")
+                push_player = True
         if push_total:
             db_cursor.execute(query_total[:-1])
-        db_cursor.execute(query[:-1])
+        if push_player:
+            db_cursor.execute(query[:-1])
 
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
@@ -236,16 +239,19 @@ if __name__ == "__main__":
     cursor = db.cursor()
     create_table_if_needed(db, cursor)
     while True:
-
+        cursor.execute("Select URL FROM Trackers")
+        existing_trackers = cursor.fetchall()
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
             for new_url in new_tracker_urls:
                 if "/room/" in new_url:
-                    room_page = request('get', "https://archipelago.gg/room/vJ66m0maRH6WOP6IqOZIVA")
+                    room_page = request('get', new_url)
 
                     room_html = bs(room_page.text, 'html.parser')
                     room_info = room_html.find("span", id="host-room-info").contents
                     new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
+                if (new_url,) in existing_trackers:
+                    continue
                 if "/tracker/" in new_url:
                     cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', "
                                    f"TIMESTAMP '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
@@ -269,8 +275,9 @@ if __name__ == "__main__":
         for url in unfinished_seeds:
             try:
                 push_to_db(db, cursor, url[0])
-            except:
+            except BaseException:
                 print(f"Error und push_to_db for URL {url[0]}")
+                logging.exception("An Exception was thrown!")
                 db.close()
                 db = psycopg2.connect(dbname="",
                                       user="",
