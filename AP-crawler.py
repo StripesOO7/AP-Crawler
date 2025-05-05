@@ -132,7 +132,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     db_cursor.execute(f"SELECT * FROM Stats LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
                       f"url AS ts_url FROM Stats WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
                       f"Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number AND Stats.url = Ts.ts_url WHERE "
-                      f"Stats.url = '{tracker_url}'")
+                      f"Stats.url = '{tracker_url}' AND Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number")
 
     old_player_data = db_cursor.fetchall()
     print(f"time taken to fetch old data: {time.time() - timer}")
@@ -143,7 +143,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> None:
     db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
                       f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
                       f"Stats_Total.timestamp = Ts.time AND Stats_Total.number = Ts.ts_number AND Stats_Total.url = "
-                      f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}'")
+                      f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}' AND Stats_Total.timestamp = Ts.time AND "
+                      f"Stats_Total.number = Ts.ts_number")
     old_total_data = db_cursor.fetchall()
     for row in old_total_data:
         add_old_totalinfo_to_dict(old_player_data_dict, row)
@@ -243,6 +244,7 @@ if __name__ == "__main__":
         existing_trackers = cursor.fetchall()
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
+            new_tracker_urls = set(new_tracker_urls)
             for new_url in new_tracker_urls:
                 if "/room/" in new_url:
                     room_page = request('get', new_url)
@@ -250,7 +252,7 @@ if __name__ == "__main__":
                     room_html = bs(room_page.text, 'html.parser')
                     room_info = room_html.find("span", id="host-room-info").contents
                     new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
-                if (new_url,) in existing_trackers:
+                if (new_url.rstrip(),) in existing_trackers:
                     continue
                 if "/tracker/" in new_url:
                     cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', "
