@@ -10,11 +10,11 @@ from bs4 import BeautifulSoup as bs, element
 
 '''
 CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time TIMESTAMP WITH TIME ZONE, end_time TIMESTAMP 
-WITH TIME ZONE, last_updated TIMESTAMP WITH TIME ZONE);
-CREATE TABLE Stats(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT, 
+WITH TIME ZONE, title TEXT);
+CREATE TABLE Stats(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT,
 checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);
-CREATE TABLE Stats_Total(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT, 
-games_done INTEGER, games_total INTEGER, checks_done INTEGER, checks_total INTEGER, percentage REAL, 
+CREATE TABLE Stats_Total(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT,
+games_done INTEGER, games_total INTEGER, checks_done INTEGER, checks_total INTEGER, percentage REAL,
 connection_status TEXT);
 '''
 
@@ -151,7 +151,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
         add_old_totalinfo_to_dict(old_player_data_dict, row)
 
     timer = time.time()
-    for index, _ in enumerate(old_player_data_dict):
+    for index in old_player_data_dict.keys():
         if old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and old_player_data_dict[
             index]['connection_status'] == capture[index]["connection_status"]:
             del capture[index]
@@ -202,6 +202,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
                                  f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
                                  f"{data['percentage']}, '{data['connection_status']}'),")
                 push_player = True
+
         if push_total:
             db_cursor.execute(query_total[:-1])
         if push_player:
@@ -212,7 +213,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
         if 0 in capture.keys() and (capture[0]["checks_done"] == capture[0]["checks_total"] or capture[0][
             "connection_status"] == "Done"):
             db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
-                              f"{datetime.now(pytz_timezone('Europe/Berlin'))} WHERE url = '{tracker_url}';")
+                              f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
 
     db_connector.commit()
@@ -221,7 +222,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
 
 def create_table_if_needed(db_connector, db_cursor):
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time "
-                      "TIMESTAMPTZ, end_time TIMESTAMPTZ, last_updated TIMESTAMPTZ);")
+                      "TIMESTAMPTZ, end_time TIMESTAMPTZ, last_updated TIMESTAMPTZ, title TEXT);")
     db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp TIMESTAMPTZ, number INTEGER, name TEXT, "
                       "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status "
                       "TEXT);")
@@ -256,8 +257,8 @@ if __name__ == "__main__":
                 if (new_url.rstrip(),) in existing_trackers:
                     continue
                 if "/tracker/" in new_url:
-                    cursor.execute(f"INSERT INTO Trackers(url, start_time) VALUES ('{new_url.rstrip()}', "
-                                   f"TIMESTAMP '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
+                    cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url.rstrip()}', "
+                                   f"TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}', TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
                     print(f"added {new_url.rstrip()} to database")
                 else:
                     print("no valid tracking link found")
@@ -265,34 +266,38 @@ if __name__ == "__main__":
         if len(new_tracker_urls) > 0:
             with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
                 new_trackers.write("")
-
         timer = time.time()
 
-        get_unfinished_seeds_querey = "SELECT URL FROM Trackers WHERE COALESCE(finished, '') = '';"
-        cursor.execute(get_unfinished_seeds_querey)
+        get_unfinished_seeds_query = "SELECT URL, last_updated FROM Trackers WHERE COALESCE(finished, '') = '';"
+        cursor.execute(get_unfinished_seeds_query)
         unfinished_seeds = cursor.fetchall()
         ongoing_seeds = len(unfinished_seeds)
         if ongoing_seeds == 0:
-            break
+            print("sleeping 10 minutes")
+            time.sleep(600)
+            continue
         print(f"crawling {ongoing_seeds} Tracker{'s' if ongoing_seeds > 1 else ''}.")
         for url in unfinished_seeds:
+            last_updated = url[1]
             url = url[0]
-            check_last_updated_query = f"SELECT last_updated FROM Trackers WHERE url = '{url}';"
-            cursor.execute(check_last_updated_query)
-            last_updated = cursor.fetchone()
-            print(datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days=40))
-            print(last_updated[0])
+            #check_last_updated_query = f"SELECT last_updated FROM Trackers WHERE url = '{url}';"
+            #cursor.execute(check_last_updated_query)
+            #last_updated = url[1]
             try:
-                if (datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days=40)) > last_updated[0]:
-                    cursor.execute(f"UPDATE trackers SET finished = 'x' WHERE url = '{url}'")
-                    raise BaseException
-                res = push_to_db(db, cursor, url)
+                if (datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days = 7)) > last_updated:
+                           cursor.execute(f"UPDATE trackers SET finished = 'x' WHERE url = '{url}'")
+                           print(f"set URL: {url} to finished/paused.")
+                           db.commit()
+                           res = 0
+                           #raise BaseException
+                else:
+                    res = push_to_db(db, cursor, url)
                 if res > 0:
                     update_last_updated_query = f"UPDATE trackers SET last_updated = TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}'"
                     cursor.execute(update_last_updated_query)
-            except BaseException:
-                print(f"Error und push_to_db for URL {url[0]}")
-                logging.exception("An Exception was thrown!")
+            except BaseException as e:
+                print(f"Error on push_to_db for URL {url}")
+                logging.exception(f"An Exception was thrown! Error: {e}")
                 db.close()
                 db = psycopg2.connect(dbname="",
                                       user="",
