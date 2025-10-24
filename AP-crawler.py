@@ -152,8 +152,14 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
 
     timer = time.time()
     for index in old_player_data_dict.keys():
-        if old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and old_player_data_dict[
-            index]['connection_status'] == capture[index]["connection_status"]:
+        if index == 0:
+            delete = (old_player_data_dict[index]['games_done'] == capture[index]["games_done"] and
+                      old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and
+                      old_player_data_dict[index]['connection_status'] == capture[index]["connection_status"])
+        else:
+            delete = (old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and
+                      old_player_data_dict[index]['connection_status'] == capture[index]["connection_status"])
+        if delete:
             del capture[index]
 
     print(f"time taken to compare old data to new data: {time.time() - timer}")
@@ -176,7 +182,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
             #                                                                             > 0:
                 if data['name'] == "Total":  # total
                     query_total = query_total + (
-                        f"(TIMESTAMP '{old_player_data_dict[index]['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
+                        f"(TIMESTAMP '{data['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
                         f"'{old_player_data_dict[index]['game_name']}', "
                         f" {old_player_data_dict[index]['games_done']},"
@@ -185,7 +191,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
                         f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
                 else:  # players
                     query = query + (
-                        f"(TIMESTAMP '{old_player_data_dict[index]['timestamp'] - timedelta(minutes=1)}', '{tracker_url}',"
+                        f"(TIMESTAMP '{data['timestamp'] - timedelta(minutes=1)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, "
                         f"'{old_player_data_dict[index]['name']}', "
                         f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
