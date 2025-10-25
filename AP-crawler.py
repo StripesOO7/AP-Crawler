@@ -114,7 +114,7 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
     return player_data_dict
 
 
-def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
+def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -> int:
     '''
 
     :param db_connector:
@@ -216,8 +216,8 @@ def push_to_db(db_connector, db_cursor, tracker_url:str) -> int:
 
         print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
-        if 0 in capture.keys() and (capture[0]["checks_done"] == capture[0]["checks_total"] or capture[0][
-            "connection_status"] == "Done"):
+        if 0 in capture.keys() and (capture[0]["checks_done"] == capture[0]["checks_total"] and not has_title
+                                    or capture[0]["connection_status"] == "Done"):
             db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
                               f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
             print(f"Seed with Tracker at {tracker_url} has finished")
@@ -274,7 +274,7 @@ if __name__ == "__main__":
                 new_trackers.write("")
         timer = time.time()
 
-        get_unfinished_seeds_query = "SELECT URL, last_updated FROM Trackers WHERE COALESCE(finished, '') = '';"
+        get_unfinished_seeds_query = "SELECT URL, last_updated, title FROM Trackers WHERE COALESCE(finished, '') = '';"
         cursor.execute(get_unfinished_seeds_query)
         unfinished_seeds = cursor.fetchall()
         ongoing_seeds = len(unfinished_seeds)
@@ -286,6 +286,8 @@ if __name__ == "__main__":
         for url in unfinished_seeds:
             last_updated = url[1]
             url = url[0]
+            title = url[2]
+            has_title = len(title)>1
             #check_last_updated_query = f"SELECT last_updated FROM Trackers WHERE url = '{url}';"
             #cursor.execute(check_last_updated_query)
             #last_updated = url[1]
@@ -297,7 +299,7 @@ if __name__ == "__main__":
                            res = 0
                            #raise BaseException
                 else:
-                    res = push_to_db(db, cursor, url)
+                    res = push_to_db(db, cursor, url, has_title)
                 if res > 0:
                     update_last_updated_query = f"UPDATE trackers SET last_updated = TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}'"
                     cursor.execute(update_last_updated_query)
