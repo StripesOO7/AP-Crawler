@@ -17,7 +17,8 @@ CREATE TABLE Stats_Total(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number IN
 games_done INTEGER, games_total INTEGER, checks_done INTEGER, checks_total INTEGER, percentage REAL,
 connection_status TEXT);
 '''
-
+sec_30 = 30
+days_7 = 7*24*60*60 #604800
 
 def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
     # print(info_list)
@@ -182,7 +183,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -> int:
             #                                                                             > 0:
                 if data['name'] == "Total":  # total
                     query_total = query_total + (
-                        f"(TIMESTAMP '{data['timestamp']-timedelta(minutes=1)}', '{tracker_url}',"
+                        f"(TIMESTAMP '{data['timestamp']-timedelta(seconds=30)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
                         f"'{old_player_data_dict[index]['game_name']}', "
                         f" {old_player_data_dict[index]['games_done']},"
@@ -191,7 +192,7 @@ def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -> int:
                         f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
                 else:  # players
                     query = query + (
-                        f"(TIMESTAMP '{data['timestamp'] - timedelta(minutes=1)}', '{tracker_url}',"
+                        f"(TIMESTAMP '{data['timestamp'] - timedelta(seconds=30)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, "
                         f"'{old_player_data_dict[index]['name']}', "
                         f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
@@ -283,11 +284,12 @@ if __name__ == "__main__":
             time.sleep(600)
             continue
         print(f"crawling {ongoing_seeds} Tracker{'s' if ongoing_seeds > 1 else ''}.")
-        for url in unfinished_seeds:
-            last_updated = url[1]
-            url = url[0]
-            title = url[2]
-            has_title = len(title)>1
+        for url_tuple in unfinished_seeds:
+            url, last_updated, title = url_tuple
+            if title is not None:
+                has_title = True
+            else:
+                has_title = False
             #check_last_updated_query = f"SELECT last_updated FROM Trackers WHERE url = '{url}';"
             #cursor.execute(check_last_updated_query)
             #last_updated = url[1]
