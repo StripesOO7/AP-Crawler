@@ -2,6 +2,7 @@ import os.path
 import time
 from datetime import datetime, timedelta
 import psycopg2
+import asyncio
 import sqlite3
 from pytz import timezone as pytz_timezone
 import logging
@@ -19,6 +20,22 @@ connection_status TEXT);
 '''
 sec_30 = 30
 days_7 = 7*24*60*60 #604800
+
+db_login = {
+    "dbname":"",
+    "user":"",
+    "password":"",
+    "host":"",
+    "port":""
+}
+
+async def fetch_tracker_from_room(new_url):
+    room_page = request('get', new_url)
+    room_html = bs(room_page.text, 'html.parser')
+    try:
+        return room_html.find("span", id="host-room-info").contents
+    except:
+        raise(ValueError(f"Room at '{new_url}' does not exist anymore"))
 
 def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
     # print(info_list)
@@ -85,7 +102,7 @@ def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
 
 
 
-def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
+async def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
     tracker_page = request('get', tracker_url)
 
     tracker_html = bs(tracker_page.text, 'html.parser')
@@ -115,17 +132,19 @@ def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
     return player_data_dict
 
 
-def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -> int:
+async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -> int:
     '''
 
     :param db_connector:
     :param db_cursor:
-    :param tracker_url: URL for the AP-Multitracker Pageto crawl the information
+    :param tracker_url: URL for the AP-Multitracker Page to crawl the information
     :param spreadsheet: URL for possible target to push the data into. meant for the big asyncs spreadsheet. normally empty
+    :param has_title:
     :return:
     '''
+    print(f"start push to db for {tracker_url}")
     timer = time.time()
-    capture = crawl_tracker(tracker_url)
+    capture = await crawl_tracker(tracker_url)
     print("time taken to capture: ", time.time() - timer)
     timer = time.time()
     # db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, FROM Stats WHERE url = "
@@ -238,37 +257,70 @@ def create_table_if_needed(db_connector, db_cursor):
                       "INTEGER, percentage REAL, connection_status TEXT);")
     db_connector.commit()
 
+async def new_url_handling(new_url:str, existing_trackers):
+    if "/room/" in new_url:
+        room_info = await fetch_tracker_from_room(new_url)
+        new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
+    if (new_url.rstrip(),) in existing_trackers:
+        return
+    if "/tracker/" in new_url:
+        db = psycopg2.connect(**db_login)
+        cursor = db.cursor()
+        cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url.rstrip()}', "
+                       f"TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}', TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
+        print(f"added {new_url.rstrip()} to database")
+        db.close()
+    else:
+        print("no valid tracking link found")
 
-if __name__ == "__main__":
-    db =  psycopg2.connect(dbname="",
-                           user="",
-                           password="",
-                           host="",
-                           port="")
+async def main_url_fetch(url_tuple):
+    timer = time.time()
+    db = psycopg2.connect(**db_login)
+    cursor = db.cursor()
+    url, last_updated, title = url_tuple
+    if title is not None:
+        has_title = True
+    else:
+        has_title = False
+    # check_last_updated_query = f"SELECT last_updated FROM Trackers WHERE url = '{url}';"
+    # cursor.execute(check_last_updated_query)
+    # last_updated = url[1]
+    if (datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days=7)) > last_updated:
+        cursor.execute(f"UPDATE trackers SET finished = 'x' WHERE url = '{url}'")
+        print(f"set URL: {url} to finished/paused.")
+        db.commit()
+        res = 0
+        # raise BaseException
+    else:
+        res = await push_to_db(db, cursor, url, has_title)
+    if res > 0:
+        update_last_updated_query = f"UPDATE trackers SET last_updated = TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}'"
+        cursor.execute(update_last_updated_query)
+    db.close()
+    print("time taken for main url fetch: ", time.time() - timer)
+
+async def main():
+    db = psycopg2.connect(**db_login)
     # db = sqlite3.connect("AP-Crawler.db")
     cursor = db.cursor()
     create_table_if_needed(db, cursor)
+    db.close()
     while True:
+        db = psycopg2.connect(**db_login)
+        # db = sqlite3.connect("AP-Crawler.db")
+        cursor = db.cursor()
         cursor.execute("Select URL FROM Trackers")
         existing_trackers = cursor.fetchall()
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
             new_tracker_urls = set(new_tracker_urls)
-            for new_url in new_tracker_urls:
-                if "/room/" in new_url:
-                    room_page = request('get', new_url)
-
-                    room_html = bs(room_page.text, 'html.parser')
-                    room_info = room_html.find("span", id="host-room-info").contents
-                    new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
-                if (new_url.rstrip(),) in existing_trackers:
-                    continue
-                if "/tracker/" in new_url:
-                    cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url.rstrip()}', "
-                                   f"TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}', TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
-                    print(f"added {new_url.rstrip()} to database")
-                else:
-                    print("no valid tracking link found")
+            new_url_tasks = []
+            for i, new_url in enumerate(new_tracker_urls):
+                print(f"create task for new url {i} {new_url}")
+                new_url_tasks.append(asyncio.create_task(new_url_handling(new_url, existing_trackers)))
+            print("finished creating all tasks")
+            new_url_results = await asyncio.gather(*new_url_tasks)
+            print("all new urls processed")
             db.commit()
         if len(new_tracker_urls) > 0:
             with open(f'{os.path.curdir}/new_trackers.txt', 'w') as new_trackers:
@@ -278,50 +330,47 @@ if __name__ == "__main__":
         get_unfinished_seeds_query = "SELECT URL, last_updated, title FROM Trackers WHERE COALESCE(finished, '') = '';"
         cursor.execute(get_unfinished_seeds_query)
         unfinished_seeds = cursor.fetchall()
+        db.close()
+        print("connection closed")
         ongoing_seeds = len(unfinished_seeds)
         if ongoing_seeds == 0:
             print("sleeping 10 minutes")
             time.sleep(600)
             continue
         print(f"crawling {ongoing_seeds} Tracker{'s' if ongoing_seeds > 1 else ''}.")
-        for url_tuple in unfinished_seeds:
-            url, last_updated, title = url_tuple
-            if title is not None:
-                has_title = True
-            else:
-                has_title = False
-            #check_last_updated_query = f"SELECT last_updated FROM Trackers WHERE url = '{url}';"
-            #cursor.execute(check_last_updated_query)
-            #last_updated = url[1]
-            try:
-                if (datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days = 7)) > last_updated:
-                           cursor.execute(f"UPDATE trackers SET finished = 'x' WHERE url = '{url}'")
-                           print(f"set URL: {url} to finished/paused.")
-                           db.commit()
-                           res = 0
-                           #raise BaseException
-                else:
-                    res = push_to_db(db, cursor, url, has_title)
-                if res > 0:
-                    update_last_updated_query = f"UPDATE trackers SET last_updated = TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}'"
-                    cursor.execute(update_last_updated_query)
-            except BaseException as e:
-                print(f"Error on push_to_db for URL {url}")
-                logging.exception(f"An Exception was thrown! Error: {e}")
-                db.close()
-                db = psycopg2.connect(dbname="",
-                                      user="",
-                                      password="",
-                                      host="",
-                                      port="")
-                # db = sqlite3.connect("AP-Crawler.db")
-                cursor = db.cursor()
+        unfinished_seeds_tasks = []
+        for i, url_tuple in enumerate(unfinished_seeds):
+            print(f"create task for unfinished seed {i}")
+            unfinished_seeds_tasks.append(asyncio.create_task(main_url_fetch(url_tuple)))
+        print("finished creating all tasks")
+        results = await asyncio.gather(*unfinished_seeds_tasks)
+        print("all unfinished seeds processed")
+        # db.close()
+        # print(results)
+        # for task in tasks:
+        #     try:
+        #         print(task.result())
+        #         task.result()
+        #     except BaseException as e:
+        #         print(f"Error on push_to_db for URL {url_tuple[0]}")
+        #         logging.exception(f"An Exception was thrown! Error: {e}")
+        #         db.close()
+        #         # db = psycopg2.connect(dbname="",
+        #         #                       user="",
+        #         #                       password="",
+        #         #                       host="",
+        #         #                       port="")
+        #         # db = sqlite3.connect("AP-Crawler.db")
+        #         cursor = db.cursor()
 
         print("time taken for total: ", time.time() - timer)
         sleep_time = (int(60 - (time.time() - timer)) + 1)
         print(f"sleeping for {sleep_time} seconds")
         time.sleep(sleep_time if sleep_time > 0 else 0)
-    db.close()
-    print("connection closed")
+    print("Programm ended")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 # https://docs.google.com/spreadsheets/d/16dS6P6IV7a1jN9QzUkySEPSbqXUw4rb0-yYtqcdKk0Y/ copy of big async sheet
