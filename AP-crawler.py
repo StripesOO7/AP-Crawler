@@ -2,6 +2,8 @@ import os.path
 import time
 from datetime import datetime, timedelta
 from typing import Tuple
+import os
+from dotenv import load_dotenv
 
 import psycopg2
 import asyncio
@@ -23,12 +25,13 @@ connection_status TEXT);
 sec_30 = 30
 days_7 = 7*24*60*60 #604800
 
+load_dotenv()
 db_login = {
-    "dbname":"",
-    "user":"",
-    "password":"",
-    "host":"",
-    "port":""
+    "dbname":os.getenv('dbname'),
+    "user":os.getenv('user'),
+    "password":os.getenv('password'),
+    "host":os.getenv('host'),
+    "port":os.getenv('port')
 }
 
 async def fetch_tracker_from_room(new_url):
