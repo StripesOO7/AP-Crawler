@@ -1,6 +1,8 @@
 import os.path
 import time
 from datetime import datetime, timedelta
+from typing import Tuple
+
 import psycopg2
 import asyncio
 import sqlite3
@@ -102,34 +104,38 @@ def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
 
 
 
-async def crawl_tracker(tracker_url: str) -> dict[int, dict[str, str|int|float]]:
+async def crawl_tracker(tracker_url: str) -> Tuple[bool, dict[int, dict[str, str|int|float]]]:
     tracker_page = request('get', tracker_url)
 
     tracker_html = bs(tracker_page.text, 'html.parser')
 
     timestamp = datetime.now(pytz_timezone('Europe/Berlin'))
     player_data_dict = {}
-    for player in tracker_html.find('tbody').contents:
-        tmp = []
-        for player_data in player.contents:
-            if isinstance(player_data, element.Tag):
-                tmp.append(player_data.get_text(strip=True))
-        add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
+    try:
+        for player in tracker_html.find('tbody').contents:
+            tmp = []
+            for player_data in player.contents:
+                if isinstance(player_data, element.Tag):
+                    tmp.append(player_data.get_text(strip=True))
+            add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
-    tmp = [0]
-    for total_data in tracker_html.find('tfoot').contents[1].contents:
-        if isinstance(total_data, element.Tag):
-            tmp.append(total_data.get_text(strip=True))
-    total_check = tmp[3].split(' ')[0].split('/')
-    if total_check[0] == total_check[1]:
-        tmp[3] = 'Done'
-    else:
-        tmp[3] = 'Ongoing'
-    tmp[6] = 0.0
-    tmp.append(total_check)
-    add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
+        tmp = [0]
+        for total_data in tracker_html.find('tfoot').contents[1].contents:
+            if isinstance(total_data, element.Tag):
+                tmp.append(total_data.get_text(strip=True))
+        total_check = tmp[3].split(' ')[0].split('/')
+        if total_check[0] == total_check[1]:
+            tmp[3] = 'Done'
+        else:
+            tmp[3] = 'Ongoing'
+        tmp[6] = 0.0
+        tmp.append(total_check)
+        add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
 
-    return player_data_dict
+        return True, player_data_dict
+    except:
+        return False, dict()
+        raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
 
 
 async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -> int:
@@ -144,106 +150,112 @@ async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -
     '''
     print(f"start push to db for {tracker_url}")
     timer = time.time()
-    capture = await crawl_tracker(tracker_url)
-    print("time taken to capture: ", time.time() - timer)
-    timer = time.time()
-    # db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, FROM Stats WHERE url = "
-    #                   f"'{tracker_url}' GROUP BY number) AS Ts ON Stats.timestamp = Ts.time AND Stats.number = "
-    #                   f"Ts.number AND Stats.url = Ts.url")
-    db_cursor.execute(f"SELECT * FROM Stats LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
-                      f"url AS ts_url FROM Stats WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
-                      f"Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number AND Stats.url = Ts.ts_url WHERE "
-                      f"Stats.url = '{tracker_url}' AND Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number")
-
-    old_player_data = db_cursor.fetchall()
-    print(f"time taken to fetch old data: {time.time() - timer}")
-    old_player_data_dict = {}
-    for row in old_player_data:
-        add_old_playerinfo_to_dict(old_player_data_dict, row)
-    # print(len(capture))
-    db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
-                      f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
-                      f"Stats_Total.timestamp = Ts.time AND Stats_Total.number = Ts.ts_number AND Stats_Total.url = "
-                      f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}' AND Stats_Total.timestamp = Ts.time AND "
-                      f"Stats_Total.number = Ts.ts_number")
-    old_total_data = db_cursor.fetchall()
-    for row in old_total_data:
-        add_old_totalinfo_to_dict(old_player_data_dict, row)
-
-    timer = time.time()
-    for index in old_player_data_dict.keys():
-        if index == 0:
-            delete = (old_player_data_dict[index]['games_done'] == capture[index]["games_done"] and
-                      old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and
-                      old_player_data_dict[index]['connection_status'] == capture[index]["connection_status"])
-        else:
-            delete = (old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and
-                      old_player_data_dict[index]['connection_status'] == capture[index]["connection_status"])
-        if delete:
-            del capture[index]
-
-    print(f"time taken to compare old data to new data: {time.time() - timer}")
-    # print(capture)
-    # print(len(capture))
-    if capture:
-        push_total = False
-        push_player = False
+    success, capture = await crawl_tracker(tracker_url)
+    if success:
+        print("time taken to capture: ", time.time() - timer)
         timer = time.time()
-        query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
-                 'connection_status) VALUES ')
-        query_total = ('INSERT INTO Stats_total (timestamp, url, number, name, game_name, games_done, '
-                       'games_total, checks_done, checks_total, percentage, connection_status) VALUES ')
-        for index, data, in capture.items():
-            if old_player_data_dict and (data['timestamp'] - old_player_data_dict[index]['timestamp']).seconds > 300:
-            # if old_player_data_dict and (data['timestamp'] - datetime.fromtimestamp(old_player_data_dict[index][
-            #                                                                             'timestamp'],
-            #                                                                             pytz_timezone(
-            #                                                                             'Europe/Berlin'))).seconds
-            #                                                                             > 0:
-                if data['name'] == "Total":  # total
+        # db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, FROM Stats WHERE url = "
+        #                   f"'{tracker_url}' GROUP BY number) AS Ts ON Stats.timestamp = Ts.time AND Stats.number = "
+        #                   f"Ts.number AND Stats.url = Ts.url")
+        db_cursor.execute(f"SELECT * FROM Stats LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+                          f"url AS ts_url FROM Stats WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
+                          f"Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number AND Stats.url = Ts.ts_url WHERE "
+                          f"Stats.url = '{tracker_url}' AND Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number")
+
+        old_player_data = db_cursor.fetchall()
+        print(f"time taken to fetch old data: {time.time() - timer}")
+        old_player_data_dict = {}
+        for row in old_player_data:
+            add_old_playerinfo_to_dict(old_player_data_dict, row)
+        # print(len(capture))
+        db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+                          f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
+                          f"Stats_Total.timestamp = Ts.time AND Stats_Total.number = Ts.ts_number AND Stats_Total.url = "
+                          f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}' AND Stats_Total.timestamp = Ts.time AND "
+                          f"Stats_Total.number = Ts.ts_number")
+        old_total_data = db_cursor.fetchall()
+        for row in old_total_data:
+            add_old_totalinfo_to_dict(old_player_data_dict, row)
+
+        timer = time.time()
+        for index in old_player_data_dict.keys():
+            if index == 0:
+                delete = (old_player_data_dict[index]['games_done'] == capture[index]["games_done"] and
+                          old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and
+                          old_player_data_dict[index]['connection_status'] == capture[index]["connection_status"])
+            else:
+                delete = (old_player_data_dict[index]['checks_done'] == capture[index]["checks_done"] and
+                          old_player_data_dict[index]['connection_status'] == capture[index]["connection_status"])
+            if delete:
+                del capture[index]
+
+        print(f"time taken to compare old data to new data: {time.time() - timer}")
+        # print(capture)
+        # print(len(capture))
+        if capture:
+            push_total = False
+            push_player = False
+            timer = time.time()
+            query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
+                     'connection_status) VALUES ')
+            query_total = ('INSERT INTO Stats_total (timestamp, url, number, name, game_name, games_done, '
+                           'games_total, checks_done, checks_total, percentage, connection_status) VALUES ')
+            for index, data, in capture.items():
+                if old_player_data_dict and (data['timestamp'] - old_player_data_dict[index]['timestamp']).seconds > 300:
+                # if old_player_data_dict and (data['timestamp'] - datetime.fromtimestamp(old_player_data_dict[index][
+                #                                                                             'timestamp'],
+                #                                                                             pytz_timezone(
+                #                                                                             'Europe/Berlin'))).seconds
+                #                                                                             > 0:
+                    if data['name'] == "Total":  # total
+                        query_total = query_total + (
+                            f"(TIMESTAMP '{data['timestamp'] - timedelta(seconds=30)}', '{tracker_url}',"
+                            f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
+                            f"'{old_player_data_dict[index]['game_name']}', "
+                            f" {old_player_data_dict[index]['games_done']},"
+                            f" {old_player_data_dict[index]['games_total']},"
+                            f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
+                            f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
+                    else:  # players
+                        query = query + (
+                            f"(TIMESTAMP '{data['timestamp'] - timedelta(seconds=30)}', '{tracker_url}',"
+                            f" {old_player_data_dict[index]['number']}, "
+                            f"'{old_player_data_dict[index]['name']}', "
+                            f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
+                            f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
+                if data['name'] == "Total": # total
                     query_total = query_total + (
-                        f"(TIMESTAMP '{data['timestamp']-timedelta(seconds=30)}', '{tracker_url}',"
-                        f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
-                        f"'{old_player_data_dict[index]['game_name']}', "
-                        f" {old_player_data_dict[index]['games_done']},"
-                        f" {old_player_data_dict[index]['games_total']},"
-                        f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
-                        f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
-                else:  # players
-                    query = query + (
-                        f"(TIMESTAMP '{data['timestamp'] - timedelta(seconds=30)}', '{tracker_url}',"
-                        f" {old_player_data_dict[index]['number']}, "
-                        f"'{old_player_data_dict[index]['name']}', "
-                        f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
-                        f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
-            if data['name'] == "Total": # total
-                query_total = query_total + (
-                    f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
-                    f"'{data['game_name']}', {data['games_done']}, {data['games_total']},"
-                    f"{data['checks_done']}, {data['checks_total']},"
-                    f"{data['percentage']}, '{data['connection_status']}'),")
-                push_total = True
-            else: # players
-                query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
-                                 f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
-                                 f"{data['percentage']}, '{data['connection_status']}'),")
-                push_player = True
+                        f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
+                        f"'{data['game_name']}', {data['games_done']}, {data['games_total']},"
+                        f"{data['checks_done']}, {data['checks_total']},"
+                        f"{data['percentage']}, '{data['connection_status']}'),")
+                    push_total = True
+                else: # players
+                    query = query + (f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
+                                     f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
+                                     f"{data['percentage']}, '{data['connection_status']}'),")
+                    push_player = True
 
-        if push_total:
-            db_cursor.execute(query_total[:-1])
-        if push_player:
-            db_cursor.execute(query[:-1])
+            if push_total:
+                db_cursor.execute(query_total[:-1])
+            if push_player:
+                db_cursor.execute(query[:-1])
 
-        print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
+            print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
-        if 0 in capture.keys() and (capture[0]["checks_done"] == capture[0]["checks_total"] and not has_title
-                                    or capture[0]["connection_status"] == "Done"):
-            db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
-                              f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
-            print(f"Seed with Tracker at {tracker_url} has finished")
+            if 0 in capture.keys() and (capture[0]["checks_done"] == capture[0]["checks_total"] and not has_title
+                                        or capture[0]["connection_status"] == "Done"):
+                db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+                                  f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
+                print(f"Seed with Tracker at {tracker_url} has finished")
 
-    db_connector.commit()
-    return len(capture)
+        db_connector.commit()
+        return len(capture)
+    else:
+        db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+                          f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
+        return len(capture)
+
 
 
 def create_table_if_needed(db_connector, db_cursor):
