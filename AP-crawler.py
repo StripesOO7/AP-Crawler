@@ -5,7 +5,6 @@ from typing import Tuple
 from os import getenv
 from dotenv import load_dotenv
 import json
-from multiprocessing import Pool
 
 import psycopg2
 import asyncio
@@ -385,8 +384,7 @@ async def new_url_handling(new_url:str, existing_trackers):
     db.commit()
     db.close()
 
-async def main_url_fetch(pool_param):
-    url, last_updated, title, checks_done, old_player_data, old_total_data = pool_param
+async def main_url_fetch(url, last_updated, title, checks_done, old_player_data, old_total_data):
     timer = time.time()
     db = psycopg2.connect(**db_login)
     cursor = db.cursor()
@@ -477,19 +475,14 @@ async def main():
         combined_old_total_data = cursor.fetchall()
         for old_total_data in combined_old_total_data:
             old_total_data_per_url[old_total_data[0]].append(old_total_data)
-        # unfinished_seeds_tasks = []
-        unfinished_seeds_args = []
+        unfinished_seeds_tasks = []
         for i, url_tuple in enumerate(unfinished_seeds):
             #print(f"create task for unfinished seed {i}")
             url, last_updated, title, checks_done = url_tuple
-            # unfinished_seeds_tasks.append(asyncio.create_task(main_url_fetch(url, last_updated, title, checks_done,
-            #                                          old_player_data_per_url[url],  old_total_data_per_url[url])))
-            unfinished_seeds_args.append((url, last_updated, title, checks_done, old_player_data_per_url[url],
-                                          old_total_data_per_url[url]))
+            unfinished_seeds_tasks.append(asyncio.create_task(main_url_fetch(url, last_updated, title, checks_done,
+                                                     old_player_data_per_url[url],  old_total_data_per_url[url])))
         print(f"finished creating all {i} tasks")
-        with Pool(len(unfinished_seeds)//5) as p:
-            p.map_async(main_url_fetch, unfinished_seeds_args)
-        # results = await asyncio.gather(*unfinished_seeds_tasks)
+        results = await asyncio.gather(*unfinished_seeds_tasks)
         print("all unfinished seeds processed")
         # db.close()
         # print(results)
