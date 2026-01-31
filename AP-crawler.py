@@ -304,18 +304,18 @@ async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool, o
                             f" {old_player_data_dict[index]['number']}, "
                             f"'{old_player_data_dict[index]['name']}', "
                             f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
-                            f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}'),")
+                            f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}')")
                 if data['name'] == "Total": # total
                     query_total_list.append(
                         f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
                         f"'{data['game_name']}', {data['games_done']}, {data['games_total']},"
                         f"{data['checks_done']}, {data['checks_total']},"
-                        f"{data['percentage']}, '{data['connection_status']}'),")
+                        f"{data['percentage']}, '{data['connection_status']}')")
                     push_total = True
                 else: # players
                     query_list.append(f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
                                      f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
-                                     f"{data['percentage']}, '{data['connection_status']}'),")
+                                     f"{data['percentage']}, '{data['connection_status']}')")
                     push_player = True
 
             if push_total:
