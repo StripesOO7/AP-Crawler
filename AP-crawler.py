@@ -2,24 +2,30 @@ import os.path
 import time
 from datetime import datetime, timedelta
 from typing import Tuple
-import os
+from os import getenv
 from dotenv import load_dotenv
+import json
 
 import psycopg2
 import asyncio
-import sqlite3
 from pytz import timezone as pytz_timezone
 import logging
 from requests import request
 from bs4 import BeautifulSoup as bs, element
 
 '''
-CREATE TABLE Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time TIMESTAMP WITH TIME ZONE, end_time TIMESTAMP 
-WITH TIME ZONE, title TEXT);
-CREATE TABLE Stats(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT,
-checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);
-CREATE TABLE Stats_Total(url TEXT, timestamp TIMESTAMP WITH TIME ZONE, number INTEGER, name TEXT, game_name TEXT,
-games_done INTEGER, games_total INTEGER, checks_done INTEGER, checks_total INTEGER, percentage REAL,
+CREATE TABLE Trackers(tracker_index BIGSERIAL PRIMARY KEY, url TEXT , finished TEXT, start_time TIMESTAMP WITH TIME ZONE, 
+end_time TIMESTAMP WITH TIME ZONE, title TEXT);
+
+CREATE TABLE Players(player_index BIGSERIAL PRIMARY KEY, playernumber INTEGER, room_url BIGINT references Trackers(
+tracker_index), basename TEXT);
+
+CREATE TABLE Stats_Players(url_index BIGINT references Trackers(tracker_index), timestamp TIMESTAMP WITH TIME ZONE, 
+number BIGINT references Players(player_index), name TEXT, game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);
+
+CREATE TABLE Stats_Total(url_index BIGINT references Trackers(tracker_index), timestamp TIMESTAMP WITH TIME ZONE, 
+number BIGINT references Players(player_index), name TEXT, game_name TEXT, games_done INTEGER, games_total INTEGER, 
+checks_done INTEGER, checks_total INTEGER, percentage REAL,
 connection_status TEXT);
 '''
 sec_30 = 30
@@ -27,11 +33,19 @@ days_7 = 7*24*60*60 #604800
 
 load_dotenv()
 db_login = {
-    "dbname":os.getenv('dbname'),
-    "user":os.getenv('user'),
-    "password":os.getenv('password'),
-    "host":os.getenv('host'),
-    "port":os.getenv('port')
+    "dbname":getenv('dbname'),
+    "user":getenv('user'),
+    "password":getenv('password'),
+    "host":getenv('host'),
+    "port":getenv('port')
+}
+
+client_status_lookup = {
+    0: "Disconnected",
+    5: "Connected",
+    10: "Ready",
+    20: "Playing",
+    30: "Goal Completed",
 }
 
 async def fetch_tracker_from_room(new_url):
@@ -41,6 +55,11 @@ async def fetch_tracker_from_room(new_url):
         return room_html.find("span", id="host-room-info").contents
     except:
         raise(ValueError(f"Room at '{new_url}' does not exist anymore"))
+
+def get_players(tracker_url:str):
+    api_content = request('get', tracker_url.replace('/tracker/', '/api/tracker/')).content
+    tracker_api_json = json.loads(api_content)
+    return tracker_api_json["aliases"]
 
 def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
     # print(info_list)
@@ -105,9 +124,59 @@ def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
         'games_total': int(info_list[6]),
     }
 
+async def crawl_tracker_from_api(tracker_api_url: str):
+    try:
+        api_content = request('get', tracker_api_url.replace('/tracker/', '/api/tracker/')).content
+        static_api_content = request('get', tracker_api_url.replace('/tracker/', '/api/static_tracker/')).content
+        tracker_api_json = json.loads(api_content)
+    except:
+        print(f"Error when fetching content for {tracker_api_url},\nPage probably does not exist anymore")
+        return False, dict()
+    static_tracker_api_json = json.loads(static_api_content)
+    timestamp = datetime.now(pytz_timezone('Europe/Berlin'))
+    player_data_dict = {}
+    total_locations = 0
+    games_done = 0
+    very_last_activity = 0
+    try:
+        # tmp = [0, ]
+        for index in range(0,len(tracker_api_json["activity_timers"])):
+            number = static_tracker_api_json["player_game"][index]["player"]
+            name = tracker_api_json["aliases"][index]["alias"]
+            game_name = static_tracker_api_json["player_game"][index]["game"]
+            connection_status = client_status_lookup[tracker_api_json["player_status"][index]["status"]]
+            checks_done = len(tracker_api_json["player_checks_done"][index]["locations"])
+            checks_total = len(static_tracker_api_json["player_locations_total"][index]["total_locations"])
+            percentage = checks_done/checks_total
+            last_activity = tracker_api_json["activity_timers"][index]["time"]
+            tmp = [number, name, game_name, connection_status, (checks_done, checks_total), percentage,
+                   last_activity]
+            add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
 
+            total_locations += checks_total
+            if connection_status == client_status_lookup[30]:
+                games_done += 1
+            if last_activity > very_last_activity:
+                very_last_activity = last_activity
+        number = 0
+        name = "Total"
+        checks_total = total_locations
+        checks_done = tracker_api_json["total_checks_done"][0]["checks_done"]
+        percentage = checks_done/checks_total
+        if checks_done == checks_total:
+            connection_status = 'Done'
+        else:
+            connection_status = 'Ongoing'
+        tmp = [number, name, 'All Games', connection_status, (checks_done, checks_total), percentage,
+               very_last_activity, (games_done, len(tracker_api_json["activity_timers"]))]
+        add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
 
-async def crawl_tracker(tracker_url: str) -> Tuple[bool, dict[int, dict[str, str|int|float]]]:
+        return True, player_data_dict
+    except:
+        return False, dict()
+        raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
+
+async def crawl_tracker_from_html(tracker_url: str) -> Tuple[bool, dict[int, dict[str, str|int|float]]]:
     tracker_page = request('get', tracker_url)
 
     tracker_html = bs(tracker_page.text, 'html.parser')
@@ -140,8 +209,8 @@ async def crawl_tracker(tracker_url: str) -> Tuple[bool, dict[int, dict[str, str
         return False, dict()
         raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
 
-
-async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -> int:
+async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
+                     old_total_data:list) -> int:
     '''
 
     :param db_connector:
@@ -153,30 +222,31 @@ async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -
     '''
     print(f"start push to db for {tracker_url}")
     timer = time.time()
-    success, capture = await crawl_tracker(tracker_url)
+    # success, capture = await crawl_tracker_from_html(tracker_url)
+    success, capture = await crawl_tracker_from_api(tracker_url)
     if success:
         print("time taken to capture: ", time.time() - timer)
         timer = time.time()
-        # db_cursor.execute(f"SELECT * FROM Stats JOIN (SELECT max(timestamp) AS time, number, FROM Stats WHERE url = "
-        #                   f"'{tracker_url}' GROUP BY number) AS Ts ON Stats.timestamp = Ts.time AND Stats.number = "
-        #                   f"Ts.number AND Stats.url = Ts.url")
-        db_cursor.execute(f"SELECT * FROM Stats LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
-                          f"url AS ts_url FROM Stats WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
-                          f"Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number AND Stats.url = Ts.ts_url WHERE "
-                          f"Stats.url = '{tracker_url}' AND Stats.timestamp = Ts.time AND Stats.number = Ts.ts_number")
-
-        old_player_data = db_cursor.fetchall()
-        print(f"time taken to fetch old data: {time.time() - timer}")
+        # db_cursor.execute(f"SELECT * FROM Stats_Players JOIN (SELECT max(timestamp) AS time, number, FROM Stats_Players WHERE url = "
+        #                   f"'{tracker_url}' GROUP BY number) AS Ts ON Stats_Players.timestamp = Ts.time AND Stats_Players.number = "
+        #                   f"Ts.number AND Stats_Players.url = Ts.url")
+        # db_cursor.execute(f"SELECT * FROM Stats_Players LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+        #                   f"url AS ts_url FROM Stats_Players WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
+        #                   f"Stats_Players.timestamp = Ts.time AND Stats_Players.number = Ts.ts_number AND Stats_Players.url = Ts.ts_url WHERE "
+        #                   f"Stats_Players.url = '{tracker_url}' AND Stats_Players.timestamp = Ts.time AND Stats_Players.number = Ts.ts_number")
+        #
+        # old_player_data = db_cursor.fetchall()
+        #print(f"time taken to fetch old data: {time.time() - timer}")
         old_player_data_dict = {}
         for row in old_player_data:
             add_old_playerinfo_to_dict(old_player_data_dict, row)
         # print(len(capture))
-        db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
-                          f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
-                          f"Stats_Total.timestamp = Ts.time AND Stats_Total.number = Ts.ts_number AND Stats_Total.url = "
-                          f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}' AND Stats_Total.timestamp = Ts.time AND "
-                          f"Stats_Total.number = Ts.ts_number")
-        old_total_data = db_cursor.fetchall()
+        # db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+        #                   f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
+        #                   f"Stats_Total.timestamp = Ts.time AND Stats_Total.number = Ts.ts_number AND Stats_Total.url = "
+        #                   f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}' AND Stats_Total.timestamp = Ts.time AND "
+        #                   f"Stats_Total.number = Ts.ts_number")
+        # old_total_data = db_cursor.fetchall()
         for row in old_total_data:
             add_old_totalinfo_to_dict(old_player_data_dict, row)
 
@@ -192,14 +262,14 @@ async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -
             if delete:
                 del capture[index]
 
-        print(f"time taken to compare old data to new data: {time.time() - timer}")
+        #print(f"time taken to compare old data to new data: {time.time() - timer}")
         # print(capture)
         # print(len(capture))
         if capture:
             push_total = False
             push_player = False
             timer = time.time()
-            query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
+            query = ('INSERT INTO Stats_Players (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
                      'connection_status) VALUES ')
             query_total = ('INSERT INTO Stats_total (timestamp, url, number, name, game_name, games_done, '
                            'games_total, checks_done, checks_total, percentage, connection_status) VALUES ')
@@ -255,21 +325,25 @@ async def push_to_db(db_connector, db_cursor, tracker_url:str, has_title:bool) -
         db_connector.commit()
         return len(capture)
     else:
-        db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
-                          f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
+        #db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+        #                  f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
+        #db_connector.commit()
         return len(capture)
 
 
 
 def create_table_if_needed(db_connector, db_cursor):
-    db_cursor.execute("CREATE TABLE IF NOT EXISTS Trackers(url TEXT PRIMARY KEY , finished TEXT, start_time "
-                      "TIMESTAMPTZ, end_time TIMESTAMPTZ, last_updated TIMESTAMPTZ, title TEXT);")
-    db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp TIMESTAMPTZ, number INTEGER, name TEXT, "
-                      "game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status "
-                      "TEXT);")
-    db_cursor.execute("CREATE TABLE IF NOT EXISTS Stats(url TEXT, timestamp TIMESTAMPTZ, number INTEGER, name TEXT, "
-                      "game_name TEXT, games_done INTEGER, games_total INTEGER, checks_done INTEGER, checks_total "
-                      "INTEGER, percentage REAL, connection_status TEXT);")
+    db_cursor.execute("CREATE TABLE Trackers(tracker_index BIGSERIAL PRIMARY KEY, url TEXT , finished TEXT, "
+                      "start_time TIMESTAMP WITH TIME ZONE, end_time TIMESTAMP WITH TIME ZONE, title TEXT);")
+    db_cursor.execute("CREATE TABLE Players(player_index BIGSERIAL PRIMARY KEY, playernumber INTEGER, "
+                      "room_url BIGINT references Trackers(tracker_index), basename TEXT);")
+    db_cursor.execute("CREATE TABLE Stats_Players(url_index BIGINT references Trackers(tracker_index), "
+                      "timestamp TIMESTAMP WITH TIME ZONE, number BIGINT references Players(player_index), "
+                      "name TEXT, game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);")
+    db_cursor.execute("CREATE TABLE Stats_Total(url_index BIGINT references Trackers(tracker_index), "
+                      "timestamp TIMESTAMP WITH TIME ZONE, number BIGINT references Players(player_index), name TEXT, "
+                      "game_name TEXT, games_done INTEGER, games_total (INTEGER, checks_done) INTEGER, checks_total INTEGER, "
+                      "percentage REAL, connection_status TEXT);")
     db_connector.commit()
 
 async def new_url_handling(new_url:str, existing_trackers):
@@ -277,6 +351,7 @@ async def new_url_handling(new_url:str, existing_trackers):
         room_info = await fetch_tracker_from_room(new_url)
         new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
     if (new_url.rstrip(),) in existing_trackers:
+        print(f"{new_url} already in database")
         return
     if "/tracker/" in new_url:
         db = psycopg2.connect(**db_login)
@@ -284,15 +359,29 @@ async def new_url_handling(new_url:str, existing_trackers):
         cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url.rstrip()}', "
                        f"TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}', TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
         print(f"added {new_url.rstrip()} to database")
+        db.commit()
         db.close()
     else:
         print("no valid tracking link found")
+    players = get_players(new_url)
+    db = psycopg2.connect(**db_login)
+    cursor = db.cursor()
+    query = "INSERT INTO Players(playernumber, room_url, basename) VALUES"
+    for player in players:
+        query = query + f"({player['player']},'{new_url}','{player['alias']}'),"
 
-async def main_url_fetch(url_tuple):
+    cursor.execute(query[:-1])
+    print(f"added {len(players)} Player to database")
+    db.commit()
+    db.close()
+
+async def main_url_fetch(url, last_updated, title, checks_done, old_player_data, old_total_data):
     timer = time.time()
     db = psycopg2.connect(**db_login)
     cursor = db.cursor()
-    url, last_updated, title = url_tuple
+    # url, last_updated, title, checks_done = url_tuple
+    print(checks_done)
+    checks_done = checks_done or 0
     if title is not None:
         has_title = True
     else:
@@ -300,25 +389,31 @@ async def main_url_fetch(url_tuple):
     # check_last_updated_query = f"SELECT last_updated FROM Trackers WHERE url = '{url}';"
     # cursor.execute(check_last_updated_query)
     # last_updated = url[1]
-    if (datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days=7)) > last_updated:
+    if ((datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days=7)) > last_updated) or (checks_done == 0 and (datetime.now(pytz_timezone('Europe/Berlin')) - timedelta(days=1)) > last_updated ):
         cursor.execute(f"UPDATE trackers SET finished = 'x' WHERE url = '{url}'")
         print(f"set URL: {url} to finished/paused.")
         db.commit()
         res = 0
         # raise BaseException
     else:
-        res = await push_to_db(db, cursor, url, has_title)
+        res = await push_to_db(db, cursor, url, has_title, old_player_data, old_total_data)
+        print(res)
     if res > 0:
         update_last_updated_query = f"UPDATE trackers SET last_updated = TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}'"
         cursor.execute(update_last_updated_query)
+        db.commit()
     db.close()
-    print("time taken for main url fetch: ", time.time() - timer)
+    #print("time taken for main url fetch: ", time.time() - timer)
 
 async def main():
     db = psycopg2.connect(**db_login)
     # db = sqlite3.connect("AP-Crawler.db")
     cursor = db.cursor()
-    create_table_if_needed(db, cursor)
+    try:
+        create_table_if_needed(db, cursor)
+    except psycopg2.errors.DuplicateTable:
+        print("tables already present")
+        # pass
     db.close()
     while True:
         db = psycopg2.connect(**db_login)
@@ -342,22 +437,42 @@ async def main():
                 new_trackers.write("")
         timer = time.time()
 
-        get_unfinished_seeds_query = "SELECT URL, last_updated, title FROM Trackers WHERE COALESCE(finished, '') = '';"
+        get_unfinished_seeds_query = "SELECT Trackers.URL, last_updated, title, stats_total.checks_done FROM Trackers LEFT OUTER JOIN (Select url, max(checks_done) as checks_done, max(connection_status) as connection_status from stats_total WHERE not connection_status = 'Done' GROUP BY url) as stats_total on trackers.url = stats_total.url WHERE COALESCE(finished, '') = '';"
         cursor.execute(get_unfinished_seeds_query)
         unfinished_seeds = cursor.fetchall()
-        db.close()
-        print("connection closed")
         ongoing_seeds = len(unfinished_seeds)
         if ongoing_seeds == 0:
+            db.commit()
+            print("connection closed")
             print("sleeping 10 minutes")
             time.sleep(600)
             continue
         print(f"crawling {ongoing_seeds} Tracker{'s' if ongoing_seeds > 1 else ''}.")
+        url_list = ", ".join(f"'{seed[0]}'" for seed in unfinished_seeds)
+        old_player_data_per_url = {seed[0]:[] for seed in unfinished_seeds}
+        old_total_data_per_url = {seed[0]:[] for seed in unfinished_seeds}
+        cursor.execute(f"SELECT * FROM stats LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+                       f"url AS ts_url FROM stats WHERE url in ({url_list}) GROUP BY number, url) AS Ts ON "
+                       f"stats.timestamp = Ts.time AND stats.number = Ts.ts_number AND stats.url = Ts.ts_url WHERE "
+                       f"stats.url in ({url_list}) AND stats.timestamp = Ts.time AND stats.number = Ts.ts_number")
+        combined_old_player_data = cursor.fetchall()
+        for old_player_data in combined_old_player_data:
+            old_player_data_per_url[old_player_data[0]].append(old_player_data)
+        cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
+                          f"url AS ts_url FROM Stats_Total WHERE url in ({url_list}) GROUP BY number, url) AS Ts ON "
+                          f"Stats_Total.timestamp = Ts.time AND Stats_Total.number = Ts.ts_number AND Stats_Total.url = "
+                          f"Ts.ts_url WHERE Stats_Total.url in ({url_list}) AND Stats_Total.timestamp = Ts.time AND "
+                          f"Stats_Total.number = Ts.ts_number")
+        combined_old_total_data = cursor.fetchall()
+        for old_total_data in combined_old_total_data:
+            old_total_data_per_url[old_total_data[0]].append(old_total_data)
         unfinished_seeds_tasks = []
         for i, url_tuple in enumerate(unfinished_seeds):
-            print(f"create task for unfinished seed {i}")
-            unfinished_seeds_tasks.append(asyncio.create_task(main_url_fetch(url_tuple)))
-        print("finished creating all tasks")
+            #print(f"create task for unfinished seed {i}")
+            url, last_updated, title, checks_done = url_tuple
+            unfinished_seeds_tasks.append(asyncio.create_task(main_url_fetch(url, last_updated, title, checks_done,
+                                                     old_player_data_per_url[url],  old_total_data_per_url[url])))
+        print(f"finished creating all {i} tasks")
         results = await asyncio.gather(*unfinished_seeds_tasks)
         print("all unfinished seeds processed")
         # db.close()
