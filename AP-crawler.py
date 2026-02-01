@@ -62,25 +62,26 @@ def get_players(tracker_url:str):
     tracker_api_json = json.loads(api_content)
     return tracker_api_json["aliases"]
 
-def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
+async def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
     # print(info_list)
-    info_list[4] = info_list[4].split('/')
-    # info_list[6] = 0 if info_list[6] == None else datetime.strptime(info_list[6], "%a, %d %b %Y %H:%M:%S GMT").strftime(
-    #     "%Y-%m-%d %H:%M:%S")
-    info_list[6] = 0 if info_list[6] == "None" else int(float(info_list[6]))
-    player_dict[int(info_list[0])] = {
-        'number': int(info_list[0]),
-        'name': info_list[1].replace("'", "''"),
-        'game_name': info_list[2].replace("'", "''"),
-        'connection_status': info_list[3],
-        'checks_done': int(info_list[4][0]),
-        'checks_total': int(info_list[4][1]),
-        'percentage': float(info_list[5]),
-        'timestamp': timestamp,
-        'last_activity': f'{info_list[6]//3600}:{(info_list[6]//60) % 60}',
-    }
+    for new_player_data in info_list:
+        new_player_data[4] = new_player_data[4].split('/')
+        # info_list[6] = 0 if info_list[6] == None else datetime.strptime(info_list[6], "%a, %d %b %Y %H:%M:%S GMT").strftime(
+        #     "%Y-%m-%d %H:%M:%S")
+        new_player_data[6] = 0 if new_player_data[6] == "None" else int(float(new_player_data[6]))
+        player_dict[int(new_player_data[0])] = {
+            'number': int(new_player_data[0]),
+            'name': new_player_data[1].replace("'", "''"),
+            'game_name': new_player_data[2].replace("'", "''"),
+            'connection_status': new_player_data[3],
+            'checks_done': int(new_player_data[4][0]),
+            'checks_total': int(new_player_data[4][1]),
+            'percentage': float(new_player_data[5]),
+            'timestamp': timestamp,
+            'last_activity': f'{new_player_data[6]//3600}:{(new_player_data[6]//60) % 60}',
+        }
 
-def add_totalinfo_to_dict(player_dict, info_list, timestamp) -> None:
+async def add_totalinfo_to_dict(player_dict, info_list, timestamp) -> None:
     # print(info_list)
     info_list[4] = info_list[4].split('/')
     info_list[6] = 0 if info_list[6] == "None" else int(float(info_list[6]))
@@ -99,35 +100,37 @@ def add_totalinfo_to_dict(player_dict, info_list, timestamp) -> None:
     }
 
 
-def add_old_playerinfo_to_dict(player_dict, info_list) -> None:
+async def add_old_playerinfo_to_dict(player_dict, info_list) -> None:
     # print(info_list)
-    player_dict[info_list[2]] = {
-        'number': int(info_list[2]),
-        'name': info_list[3].replace("'", "''"),
-        'game_name': info_list[4].replace("'", "''"),
-        'connection_status': info_list[8],
-        'checks_done': int(info_list[5]),
-        'checks_total': int(info_list[6]),
-        'percentage': float(info_list[7]),
-        'timestamp': info_list[1],
-    }
+    for player_data in info_list:
+        player_dict[player_data[2]] = {
+            'number': int(player_data[2]),
+            'name': player_data[3].replace("'", "''"),
+            'game_name': player_data[4].replace("'", "''"),
+            'connection_status': player_data[8],
+            'checks_done': int(player_data[5]),
+            'checks_total': int(player_data[6]),
+            'percentage': float(player_data[7]),
+            'timestamp': player_data[1],
+        }
 
-def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
+async def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
     # print(info_list)
-    player_dict[info_list[2]] = {
-        'number': int(info_list[2]),
-        'name': info_list[3].replace("'", "''"),
-        'game_name': info_list[4].replace("'", "''"),
-        'connection_status': info_list[10],
-        'checks_done': int(info_list[7]),
-        'checks_total': int(info_list[8]),
-        'percentage': float(info_list[9]),
-        'timestamp': info_list[1],
-        'games_done': int(info_list[5]),
-        'games_total': int(info_list[6]),
-    }
+    for total_data in info_list:
+        player_dict[total_data[2]] = {
+            'number': int(total_data[2]),
+            'name': total_data[3].replace("'", "''"),
+            'game_name': total_data[4].replace("'", "''"),
+            'connection_status': total_data[10],
+            'checks_done': int(total_data[7]),
+            'checks_total': int(total_data[8]),
+            'percentage': float(total_data[9]),
+            'timestamp': total_data[1],
+            'games_done': int(total_data[5]),
+            'games_total': int(total_data[6]),
+        }
 
-async def crawl_tracker_from_api(client, tracker_api_url: str):
+async def crawl_tracker_from_api(task_index, client, tracker_api_url: str):
     try:
         api_content = await client.get(tracker_api_url.replace('/tracker/', '/api/tracker/')).content
         static_api_content = await client.get(tracker_api_url.replace('/tracker/', '/api/static_tracker/')).content
@@ -144,25 +147,29 @@ async def crawl_tracker_from_api(client, tracker_api_url: str):
     try:
         tmp = [0, ]
         timer = time.time()
+        new_player_data = []
         for index in range(0,len(tracker_api_json["activity_timers"])):
-            number = static_tracker_api_json["player_game"][index]["player"]
-            name = tracker_api_json["aliases"][index]["alias"]
-            game_name = static_tracker_api_json["player_game"][index]["game"]
-            connection_status = client_status_lookup[tracker_api_json["player_status"][index]["status"]]
-            checks_done = len(tracker_api_json["player_checks_done"][index]["locations"])
-            checks_total = static_tracker_api_json["player_locations_total"][index]["total_locations"]
+            current_player_static =  static_tracker_api_json["player_game"][index]
+            current_player_api =  tracker_api_json["aliases"][index]
+
+            number = current_player_static["player"]
+            name = current_player_api["alias"]
+            game_name = current_player_static["game"]
+            connection_status = client_status_lookup[current_player_api["status"]]
+            checks_done = len(current_player_api["locations"])
+            checks_total = current_player_static["total_locations"]
             percentage = checks_done/checks_total
-            last_activity = tracker_api_json["activity_timers"][index]["time"]
+            last_activity = current_player_api["time"]
             tmp = [number, name, game_name, connection_status, (checks_done, checks_total), percentage,
                    last_activity]
             print(tmp)
-            add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
-
+            new_player_data.append(tmp)
             total_locations += checks_total
             if connection_status == client_status_lookup[30]:
                 games_done += 1
             if last_activity > very_last_activity:
                 very_last_activity = last_activity
+        await add_playerinfo_to_dict(player_data_dict, new_player_data, timestamp)
         print(f"time taken for packing data from api: {time.time() - timer}")
         number = 0
         name = "Total"
@@ -175,7 +182,7 @@ async def crawl_tracker_from_api(client, tracker_api_url: str):
             connection_status = 'Ongoing'
         tmp = [number, name, 'All Games', connection_status, (checks_done, checks_total), percentage,
                very_last_activity, (games_done, len(tracker_api_json["activity_timers"]))]
-        add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
+        await add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
 
         return True, player_data_dict
     except:
@@ -183,18 +190,23 @@ async def crawl_tracker_from_api(client, tracker_api_url: str):
         return False, dict()
         raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
 
-async def crawl_tracker_from_html(client, tracker_url: str) -> Tuple[bool, dict[int, dict[str, str|int|float]]]:
+async def crawl_tracker_from_html(task_index, client, tracker_url: str) -> Tuple[bool, dict[int, dict[str,
+str|int|float]]]:
+    print(f"crawling url with index {task_index}")
     tracker_page = await client.get(tracker_url, timeout=50)
     tracker_html = bs(tracker_page.text, 'html.parser')
     timestamp = datetime.now(pytz_timezone('Europe/Berlin'))
+    print(f"finished crawling url with index {task_index}")
     player_data_dict = {}
     try:
+        new_player_data = []
         for player in tracker_html.find('tbody').contents:
             tmp = []
             for player_data in player.contents:
                 if isinstance(player_data, element.Tag):
                     tmp.append(player_data.get_text(strip=True))
-            add_playerinfo_to_dict(player_data_dict, tmp, timestamp)
+            new_player_data.append(tmp)
+        await add_playerinfo_to_dict(player_data_dict, new_player_data, timestamp)
 
         tmp = [0]
         for total_data in tracker_html.find('tfoot').contents[1].contents:
@@ -207,14 +219,14 @@ async def crawl_tracker_from_html(client, tracker_url: str) -> Tuple[bool, dict[
             tmp[3] = 'Ongoing'
         tmp[6] = 0.0
         tmp.append(total_check)
-        add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
+        await add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
 
         return True, player_data_dict
     except:
         return False, dict()
         raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
 
-async def push_to_db(client, db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
+async def push_to_db(task_index, client, db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
                      old_total_data:list) -> int:
     '''
 
@@ -226,9 +238,9 @@ async def push_to_db(client, db_connector, db_cursor, tracker_url:str, has_title
     :param old_total_data:
     :return:
     '''
-    print(f"start push to db for {tracker_url}")
+    print(f"start push to db for {tracker_url} at index {task_index}")
     timer = time.time()
-    success, capture = await crawl_tracker_from_html(client, tracker_url) #time consuming for large rooms
+    success, capture = await crawl_tracker_from_html(task_index, client, tracker_url) #time consuming for large rooms
     # success, capture = await crawl_tracker_from_api(client, tracker_url)
     print(f"time taken to capture: {time.time() - timer}")
     if success:
@@ -245,8 +257,8 @@ async def push_to_db(client, db_connector, db_cursor, tracker_url:str, has_title
         # old_player_data = db_cursor.fetchall()
         #print(f"time taken to fetch old data: {time.time() - timer}")
         old_player_data_dict = {}
-        for row in old_player_data:
-            add_old_playerinfo_to_dict(old_player_data_dict, row)
+        # for row in old_player_data:
+        await add_old_playerinfo_to_dict(old_player_data_dict, old_player_data)
         # print(len(capture))
         # db_cursor.execute(f"SELECT * FROM Stats_Total LEFT JOIN (SELECT max(timestamp) AS time, number AS ts_number, "
         #                   f"url AS ts_url FROM Stats_Total WHERE url = '{tracker_url}' GROUP BY number, url) AS Ts ON "
@@ -254,8 +266,8 @@ async def push_to_db(client, db_connector, db_cursor, tracker_url:str, has_title
         #                   f"Ts.ts_url WHERE Stats_Total.url = '{tracker_url}' AND Stats_Total.timestamp = Ts.time AND "
         #                   f"Stats_Total.number = Ts.ts_number")
         # old_total_data = db_cursor.fetchall()
-        for row in old_total_data:
-            add_old_totalinfo_to_dict(old_player_data_dict, row)
+        # for row in old_total_data:
+        await add_old_totalinfo_to_dict(old_player_data_dict, old_total_data)
 
         # timer = time.time()
         for index in old_player_data_dict.keys():
@@ -329,7 +341,7 @@ async def push_to_db(client, db_connector, db_cursor, tracker_url:str, has_title
                                         or capture[0]["connection_status"] == "Done"):
                 db_cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
                                   f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{tracker_url}';")
-                print(f"Seed with Tracker at {tracker_url} has finished")
+                print(f"Seed with Tracker at {tracker_url} at index {task_index} has finished")
 
         db_connector.commit()
         return len(capture)
@@ -390,7 +402,7 @@ async def main_url_fetch(index, client, url, last_updated, title, checks_done, o
     db = psycopg2.connect(**db_login)
     cursor = db.cursor()
     # url, last_updated, title, checks_done = url_tuple
-    print(checks_done)
+    # print(checks_done)
     checks_done = checks_done or 0
     if title is not None:
         has_title = True
@@ -406,7 +418,7 @@ async def main_url_fetch(index, client, url, last_updated, title, checks_done, o
         res = 0
         # raise BaseException
     else:
-        res = await push_to_db(client, db, cursor, url, has_title, old_player_data, old_total_data)
+        res = await push_to_db(index, client, db, cursor, url, has_title, old_player_data, old_total_data)
         print(res)
     if res > 0:
         update_last_updated_query = f"UPDATE trackers SET last_updated = TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}'"
