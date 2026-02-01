@@ -33,6 +33,7 @@ connection_status TEXT);
 '''
 sec_30 = 30
 days_7 = 7*24*60*60 #604800
+process_count =  (os.cpu_count()//2)+1
 
 load_dotenv()
 db_login = {
@@ -248,7 +249,7 @@ async def crawling_process(unfinished_seeds, old_player_data_per_url, old_total_
             success, player_dict, url, task_index, time_spend = result
             _, last_updated, title, checks_done = unfinished_seeds[task_index]
             if success:
-                print(f"start pushing {task_index}")
+                # print(f"start pushing {task_index}")
                 await main_url_fetch(task_index, url, last_updated, title, checks_done,
                                      old_player_data_per_url[url], old_total_data_per_url[url], player_dict)
             else:
@@ -519,11 +520,11 @@ def main():
         def chunk(list, size):
             for i in range(0, len(list), size):
                 yield list[i:i + size]
-        segments = list(chunk(unfinished_seeds, ongoing_seeds//4))
+        segments = list(chunk(unfinished_seeds, ongoing_seeds//process_count))
         #
         arg_list = []
-        with Pool(4) as pool:
-            for i in range(0,4):
+        with Pool(process_count) as pool:
+            for i in range(0,process_count):
                 arg_list.append([crawling_process, segments[i], old_player_data_per_url, old_total_data_per_url])
 
             p = pool.map(just_start_async, arg_list)
