@@ -1,0 +1,6 @@
+dotenv
+psycopg2
+pytz
+requests
+bs4
+httpx
