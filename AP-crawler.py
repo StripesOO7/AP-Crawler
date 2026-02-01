@@ -486,7 +486,7 @@ def main():
                 new_trackers.write("")
         timer = time.time()
 
-        get_unfinished_seeds_query = "SELECT Trackers.URL, last_updated, title, stats_total.checks_done FROM Trackers LEFT OUTER JOIN (Select url, checks_total, max(checks_done) as checks_done, max(connection_status) as connection_status from stats_total WHERE not connection_status = 'Done' GROUP BY url, checks_total) as stats_total on trackers.url = stats_total.url WHERE COALESCE(finished, '') = '' ORDER BY stats_total.checks_total DESC;"
+        get_unfinished_seeds_query = "SELECT Trackers.URL, last_updated, title, stats_total.checks_done FROM Trackers LEFT OUTER JOIN (Select url, max(checks_done) as checks_done, max(connection_status) as connection_status from stats_total WHERE not connection_status = 'Done' GROUP BY url, checks_total) as stats_total on trackers.url = stats_total.url WHERE COALESCE(finished, '') = '';"
         cursor.execute(get_unfinished_seeds_query)
         unfinished_seeds = cursor.fetchall()
         ongoing_seeds = len(unfinished_seeds)
