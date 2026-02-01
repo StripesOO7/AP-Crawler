@@ -191,12 +191,12 @@ async def crawl_tracker_from_api(task_index, client, tracker_api_url: str):
         raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
 
 async def crawl_tracker_from_html(task_index, client, tracker_url: str) -> Tuple[bool, dict[int, dict[str,
-str|int|float]], str, int]:
-    print(f"crawling url with index {task_index}")
+str|int|float]], str, int, float]:
+    timer = time.time()
     tracker_page = await client.get(tracker_url, timeout=50)
     tracker_html = bs(tracker_page.text, 'html.parser')
     timestamp = datetime.now(pytz_timezone('Europe/Berlin'))
-    print(f"finished crawling url with index {task_index}")
+    time_spend = time.time() - timer
     player_data_dict = {}
     try:
         new_player_data = []
@@ -221,9 +221,9 @@ str|int|float]], str, int]:
         tmp.append(total_check)
         await add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
 
-        return True, player_data_dict, tracker_url, task_index
+        return True, player_data_dict, tracker_url, task_index, time_spend
     except:
-        return False, dict(), tracker_url, task_index
+        return False, dict(), tracker_url, task_index, time_spend
         raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
 
 async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
@@ -238,7 +238,7 @@ async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_t
     :param old_total_data:
     :return:
     '''
-    print(f"start push to db for {tracker_url} at index {task_index}")
+    # print(f"start push to db for {tracker_url} at index {task_index}")
     # print("time taken to capture: ", time.time() - timer)
     timer = time.time()
     # db_cursor.execute(f"SELECT * FROM Stats_Players JOIN (SELECT max(timestamp) AS time, number, FROM Stats_Players WHERE url = "
@@ -329,7 +329,7 @@ async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_t
         if push_player:
             db_cursor.execute(query + ", ".join(query_list))
 
-        print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
+        # print("time taken for database push: ", time.time() - timer, "items pushed:", len(capture))
 
         if 0 in capture.keys() and (capture[0]["checks_done"] == capture[0]["checks_total"] and not has_title
                                     or capture[0]["connection_status"] == "Done"):
@@ -391,8 +391,8 @@ async def new_url_handling(new_url:str, existing_trackers):
     db.close()
 
 async def main_url_fetch(index, url, last_updated, title, checks_done, old_player_data, old_total_data, capture):
-    print(f"starting task: {index}")
-    timer = time.time()
+    # print(f"starting task: {index}")
+    # timer = time.time()
     db = psycopg2.connect(**db_login)
     cursor = db.cursor()
     # url, last_updated, title, checks_done = url_tuple
@@ -413,13 +413,13 @@ async def main_url_fetch(index, url, last_updated, title, checks_done, old_playe
         # raise BaseException
     else:
         res = await push_to_db(index, db, cursor, url, has_title, old_player_data, old_total_data, capture)
-        print(res)
+        # print(res)
     if res > 0:
         update_last_updated_query = f"UPDATE trackers SET last_updated = TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}'"
         cursor.execute(update_last_updated_query)
         db.commit()
     db.close()
-    print("time taken for main url fetch: ", time.time() - timer)
+    # print("time taken for main url fetch: ", time.time() - timer)
 
 async def main():
     db = psycopg2.connect(**db_login)
@@ -494,11 +494,10 @@ async def main():
         #         print(f"finished creating all {i} tasks")
         async with httpx.AsyncClient() as client:
             for crawl_index, url_tuple in enumerate(unfinished_seeds):
-                timer = time.time()
                 unfinished_crawl_tasks.append(crawl_tracker_from_html(
                     crawl_index, client, url_tuple[0]))  # time consuming for large rooms
                 # success, capture = await crawl_tracker_from_api(crawl_index, client, url_tuple[0])
-            print(f"created all crawling tasks in {time.time() - timer} seconds")
+            # print(f"created all crawling tasks in {time.time() - timer} seconds")
             results = await gather(*unfinished_crawl_tasks)
             print(f"all crawling tasks processed in {time.time() - timer} seconds")
             # print(f"time taken to capture: {time.time() - timer}")
