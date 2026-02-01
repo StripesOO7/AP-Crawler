@@ -1,4 +1,5 @@
 import asyncio
+import multiprocessing
 import os.path
 import time
 from datetime import datetime, timedelta
@@ -227,6 +228,35 @@ str|int|float]], str, int, float]:
         return False, dict(), tracker_url, task_index, time_spend
         raise (ValueError(f"Room at '{tracker_url}' does not exist anymore"))
 
+async def crawling_process(unfinished_seeds, old_player_data_per_url, old_total_data_per_url):
+    timer = time.time()
+    db = psycopg2.connect(**db_login)
+    cursor = db.cursor()
+    unfinished_crawl_tasks = []
+    async with httpx.AsyncClient() as client:
+        for crawl_index, url_tuple in enumerate(unfinished_seeds):
+            unfinished_crawl_tasks.append(crawl_tracker_from_html(
+                crawl_index, client, url_tuple[0]))  # time consuming for large rooms
+        ### return True/False, player_data_dict, tracker_url, task_index, time_spend
+
+        # success, capture = await crawl_tracker_from_api(crawl_index, client, url_tuple[0])
+        # print(f"created all crawling tasks in {time.time() - timer} seconds")
+
+        # results = await gather(*unfinished_crawl_tasks)
+        for future in asyncio.as_completed(unfinished_crawl_tasks):
+            result = await future
+            success, player_dict, url, task_index, time_spend = result
+            _, last_updated, title, checks_done = unfinished_seeds[task_index]
+            if success:
+                print(f"start pushing {task_index}")
+                await main_url_fetch(task_index, url, last_updated, title, checks_done,
+                                     old_player_data_per_url[url], old_total_data_per_url[url], player_dict)
+            else:
+                cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+                               f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
+                db.commit()
+        print(f"all crawling tasks processed in {time.time() - timer} seconds")
+
 async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
                      old_total_data:list, capture) -> int:
     '''
@@ -422,7 +452,7 @@ async def main_url_fetch(index, url, last_updated, title, checks_done, old_playe
     db.close()
     # print("time taken for main url fetch: ", time.time() - timer)
 
-async def main():
+def main():
     db = psycopg2.connect(**db_login)
     # db = sqlite3.connect("AP-Crawler.db")
     cursor = db.cursor()
@@ -441,12 +471,13 @@ async def main():
         with open(f'{os.path.curdir}/new_trackers.txt', 'r') as new_trackers:
             new_tracker_urls = new_trackers.readlines()
             new_tracker_urls = set(new_tracker_urls)
-            new_url_tasks = []
+            # new_url_tasks = []
             for i, new_url in enumerate(new_tracker_urls):
                 print(f"create task for new url {i} {new_url}")
-                new_url_tasks.append(create_task(new_url_handling(new_url, existing_trackers)))
+                just_start_async(new_url_handling,new_url, existing_trackers)
+                # new_url_tasks.append(create_task(new_url_handling(new_url, existing_trackers)))
             print("finished creating all tasks")
-            new_url_results = await gather(*new_url_tasks)
+            # new_url_results = await gather(*new_url_tasks)
             print("all new urls processed")
             db.commit()
         if len(new_tracker_urls) > 0:
@@ -485,38 +516,41 @@ async def main():
             old_total_data_per_url[old_total_data[0]].append(old_total_data)
         unfinished_seeds_tasks = []
         unfinished_crawl_tasks = []
-        # async with httpx.AsyncClient() as client:
-        #     async with TaskGroup() as tg:
-        #         for i, url_tuple in enumerate(unfinished_seeds):
-        #             # print(f"create task for unfinished seed {i}")
-        #             url, last_updated, title, checks_done = url_tuple
-        #             unfinished_seeds_tasks.append(tg.create_task(main_url_fetch(i, client, url, last_updated, title, checks_done,
-        #                                                  old_player_data_per_url[url], old_total_data_per_url[url])))
-        #         print(f"finished creating all {i} tasks")
-        async with httpx.AsyncClient() as client:
-            for crawl_index, url_tuple in enumerate(unfinished_seeds):
-                unfinished_crawl_tasks.append(crawl_tracker_from_html(
-                    crawl_index, client, url_tuple[0]))  # time consuming for large rooms
-            ### return True/False, player_data_dict, tracker_url, task_index, time_spend
+        def chunk(list, size):
+            for i in range(0, len(list), size):
+                yield list[i:i + size]
+        segments = list(chunk(unfinished_seeds, 4))
+        for i in range(0,4):
+            p = multiprocessing.Process(target=just_start_async , args=(crawling_process,
+                segments[i], old_player_data_per_url, old_total_data_per_url))
+            p.start()
 
-            # success, capture = await crawl_tracker_from_api(crawl_index, client, url_tuple[0])
-            # print(f"created all crawling tasks in {time.time() - timer} seconds")
+            # async with httpx.AsyncClient() as client:
+            #     for crawl_index, url_tuple in enumerate(unfinished_seeds):
+            #         unfinished_crawl_tasks.append(crawl_tracker_from_html(
+            #             crawl_index, client, url_tuple[0]))  # time consuming for large rooms
+            #     ### return True/False, player_data_dict, tracker_url, task_index, time_spend
+            #
+            #     # success, capture = await crawl_tracker_from_api(crawl_index, client, url_tuple[0])
+            #     # print(f"created all crawling tasks in {time.time() - timer} seconds")
+            #
+            #     # results = await gather(*unfinished_crawl_tasks)
+            #     for future in asyncio.as_completed(unfinished_crawl_tasks):
+            #         result = await future
+            #         success, player_dict, url, task_index, time_spend = result
+            #         _, last_updated, title, checks_done = unfinished_seeds[task_index]
+            #         if success:
+            #             print(f"start pushing {task_index}")
+            #             await main_url_fetch(task_index, url, last_updated, title, checks_done,
+            #                          old_player_data_per_url[url], old_total_data_per_url[url], player_dict)
+            #         else:
+            #             cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+            #                              f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
+            #             db.commit()
+            #     print(f"all crawling tasks processed in {time.time() - timer} seconds")
 
-            # results = await gather(*unfinished_crawl_tasks)
-            for future in asyncio.as_completed(unfinished_crawl_tasks):
-                result = await future
-                success, player_dict, url, task_index, time_spend = result
-                _, last_updated, title, checks_done = unfinished_seeds[task_index]
-                if success:
-                    print(f"start pushing {task_index}")
-                    await main_url_fetch(task_index, url, last_updated, title, checks_done,
-                                 old_player_data_per_url[url], old_total_data_per_url[url], player_dict)
-                else:
-                    cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
-                                     f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
-                    db.commit()
-                # url, last_updated, title, checks_done = url_tuple
-            print(f"all crawling tasks processed in {time.time() - timer} seconds")
+
+
             # print(f"time taken to capture: {time.time() - timer}")
             # for i, url_tuple in enumerate(unfinished_seeds):
             #     #print(f"create task for unfinished seed {i}")
@@ -527,23 +561,6 @@ async def main():
             # print(f"finished creating all {task_index} tasks")
             # results = await gather(*unfinished_seeds_tasks)
         print("all unfinished seeds processed")
-        # db.close()
-        # print(results)
-        # for task in tasks:
-        #     try:
-        #         print(task.result())
-        #         task.result()
-        #     except BaseException as e:
-        #         print(f"Error on push_to_db for URL {url_tuple[0]}")
-        #         logging.exception(f"An Exception was thrown! Error: {e}")
-        #         db.close()
-        #         # db = psycopg2.connect(dbname="",
-        #         #                       user="",
-        #         #                       password="",
-        #         #                       host="",
-        #         #                       port="")
-        #         # db = sqlite3.connect("AP-Crawler.db")
-        #         cursor = db.cursor()
 
         print("time taken for total: ", time.time() - timer)
         sleep_time = (int(60 - (time.time() - timer)) + 1)
@@ -551,8 +568,10 @@ async def main():
         time.sleep(sleep_time) if sleep_time > 0 else None
     print("Program ended")
 
+def just_start_async(func, *args):
+    run(func(*args))
 
 if __name__ == "__main__":
-    run(main())
+    main()
 
 # https://docs.google.com/spreadsheets/d/16dS6P6IV7a1jN9QzUkySEPSbqXUw4rb0-yYtqcdKk0Y/ copy of big async sheet
