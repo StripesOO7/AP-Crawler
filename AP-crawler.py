@@ -527,7 +527,8 @@ def main():
             for i in range(0,process_count):
                 arg_list.append([crawling_process, segments[i], old_player_data_per_url, old_total_data_per_url])
 
-            p = pool.map(just_start_async, arg_list)
+            p = pool.map_async(just_start_async, arg_list)
+            p.wait()
                 # p.start()
 
             # async with httpx.AsyncClient() as client:
