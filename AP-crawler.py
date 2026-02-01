@@ -1,3 +1,4 @@
+import asyncio
 import os.path
 import time
 from datetime import datetime, timedelta
@@ -496,19 +497,35 @@ async def main():
             for crawl_index, url_tuple in enumerate(unfinished_seeds):
                 unfinished_crawl_tasks.append(crawl_tracker_from_html(
                     crawl_index, client, url_tuple[0]))  # time consuming for large rooms
-                # success, capture = await crawl_tracker_from_api(crawl_index, client, url_tuple[0])
+            ### return True/False, player_data_dict, tracker_url, task_index, time_spend
+
+            # success, capture = await crawl_tracker_from_api(crawl_index, client, url_tuple[0])
             # print(f"created all crawling tasks in {time.time() - timer} seconds")
-            results = await gather(*unfinished_crawl_tasks)
+
+            # results = await gather(*unfinished_crawl_tasks)
+            for future in asyncio.as_completed(unfinished_crawl_tasks):
+                result = await future
+                success, player_dict, url, task_index, time_spend = result
+                _, last_updated, title, checks_done = unfinished_seeds[task_index]
+                if success:
+                    print(f"start pushing {task_index}")
+                    await main_url_fetch(task_index, url, last_updated, title, checks_done,
+                                 old_player_data_per_url[url], old_total_data_per_url[url], player_dict)
+                else:
+                    cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+                                     f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
+                    db.commit()
+                # url, last_updated, title, checks_done = url_tuple
             print(f"all crawling tasks processed in {time.time() - timer} seconds")
             # print(f"time taken to capture: {time.time() - timer}")
-            for i, url_tuple in enumerate(unfinished_seeds):
-                #print(f"create task for unfinished seed {i}")
-                url, last_updated, title, checks_done = url_tuple
-                if results[i][0]:
-                    unfinished_seeds_tasks.append(main_url_fetch(i, url, last_updated, title, checks_done,
-                                     old_player_data_per_url[url],  old_total_data_per_url[url], results[i][1]))
-            print(f"finished creating all {i} tasks")
-            results = await gather(*unfinished_seeds_tasks)
+            # for i, url_tuple in enumerate(unfinished_seeds):
+            #     #print(f"create task for unfinished seed {i}")
+            #     url, last_updated, title, checks_done = url_tuple
+            #     if results[i][0]:
+            #         unfinished_seeds_tasks.append(main_url_fetch(i, url, last_updated, title, checks_done,
+            #                          old_player_data_per_url[url],  old_total_data_per_url[url], results[i][1]))
+            # print(f"finished creating all {task_index} tasks")
+            # results = await gather(*unfinished_seeds_tasks)
         print("all unfinished seeds processed")
         # db.close()
         # print(results)
