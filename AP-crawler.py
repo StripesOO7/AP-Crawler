@@ -1,5 +1,5 @@
 import asyncio
-import multiprocessing
+from multiprocessing import Pool, Process
 import os.path
 import time
 from datetime import datetime, timedelta
@@ -474,7 +474,7 @@ def main():
             # new_url_tasks = []
             for i, new_url in enumerate(new_tracker_urls):
                 print(f"create task for new url {i} {new_url}")
-                just_start_async(new_url_handling,new_url, existing_trackers)
+                just_start_async([new_url_handling, new_url, existing_trackers])
                 # new_url_tasks.append(create_task(new_url_handling(new_url, existing_trackers)))
             print("finished creating all tasks")
             # new_url_results = await gather(*new_url_tasks)
@@ -519,11 +519,15 @@ def main():
         def chunk(list, size):
             for i in range(0, len(list), size):
                 yield list[i:i + size]
-        segments = list(chunk(unfinished_seeds, 4))
-        for i in range(0,4):
-            p = multiprocessing.Process(target=just_start_async , args=(crawling_process,
-                segments[i], old_player_data_per_url, old_total_data_per_url))
-            p.start()
+        segments = list(chunk(unfinished_seeds, ongoing_seeds//4))
+        #
+        arg_list = []
+        with Pool(4) as pool:
+            for i in range(0,4):
+                arg_list.append([crawling_process, segments[i], old_player_data_per_url, old_total_data_per_url])
+
+            p = pool.map(just_start_async, arg_list)
+                # p.start()
 
             # async with httpx.AsyncClient() as client:
             #     for crawl_index, url_tuple in enumerate(unfinished_seeds):
@@ -568,8 +572,10 @@ def main():
         time.sleep(sleep_time) if sleep_time > 0 else None
     print("Program ended")
 
-def just_start_async(func, *args):
-    run(func(*args))
+def just_start_async(args):
+    func, *arg = args
+    # print(func, *arg)
+    run(func(*arg))
 
 if __name__ == "__main__":
     main()
