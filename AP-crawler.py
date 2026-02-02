@@ -394,6 +394,7 @@ def create_table_if_needed(db_connector, db_cursor):
     db_connector.commit()
 
 async def new_url_handling(new_url:str, existing_trackers):
+
     if "/room/" in new_url:
         room_info = await fetch_tracker_from_room(new_url)
         new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
@@ -406,21 +407,23 @@ async def new_url_handling(new_url:str, existing_trackers):
         cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url.rstrip()}', "
                        f"TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}', TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
         print(f"added {new_url.rstrip()} to database")
+        await crawling_process([[new_url.rstrip(), datetime.now(pytz_timezone('Europe/Berlin')), "",
+                                 0]], {new_url.rstrip():[]},{new_url.rstrip():[]})
         db.commit()
         db.close()
     else:
         print("no valid tracking link found")
-    players = get_players(new_url)
-    db = psycopg2.connect(**db_login)
-    cursor = db.cursor()
-    query = "INSERT INTO Players(playernumber, room_url, basename) VALUES"
-    for player in players:
-        query = query + f"({player['player']},'{new_url}','{player['alias']}'),"
-
-    cursor.execute(query[:-1])
-    print(f"added {len(players)} Player to database")
-    db.commit()
-    db.close()
+    # players = get_players(new_url)
+    # db = psycopg2.connect(**db_login)
+    # cursor = db.cursor()
+    # query = "INSERT INTO Players(playernumber, room_url, basename) VALUES"
+    # for player in players:
+    #     query = query + f"({player['player']},'{new_url}','{player['alias']}'),"
+    #
+    # cursor.execute(query[:-1])
+    # print(f"added {len(players)} Player to database")
+    # db.commit()
+    # db.close()
 
 async def main_url_fetch(index, url, last_updated, title, checks_done, old_player_data, old_total_data, capture):
     # print(f"starting task: {index}")
