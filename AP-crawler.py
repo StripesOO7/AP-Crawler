@@ -230,9 +230,9 @@ str|int|float]], str, int, float]:
                 if not tmp[1] in hint_dict.keys():
                     hint_dict[tmp[1]] = (0, 0, 0)  # (done, requested, total)
                 if tmp[6] == "":
-                    hint_dict[tmp[0]] = (hint_dict[tmp[0]][0], hint_dict[tmp[0]][1], hint_dict[tmp[0]][1] + 1)
+                    hint_dict[tmp[0]] = (hint_dict[tmp[0]][0], hint_dict[tmp[0]][1], hint_dict[tmp[0]][2] + 1)
                     #finding player
-                    hint_dict[tmp[1]] = (hint_dict[tmp[1]][0], hint_dict[tmp[1]][1] + 1, hint_dict[tmp[1]][1])
+                    hint_dict[tmp[1]] = (hint_dict[tmp[1]][0], hint_dict[tmp[1]][1] + 1, hint_dict[tmp[1]][2])
                     #requesting player
                 else:
                     hint_dict[tmp[0]] = (hint_dict[tmp[0]][0] + 1, hint_dict[tmp[0]][1], hint_dict[tmp[0]][2] + 1)
