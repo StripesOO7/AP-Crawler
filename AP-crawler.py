@@ -235,9 +235,9 @@ str|int|float]], str, int, float]:
                     hint_dict[tmp[1]] = (hint_dict[tmp[1]][0], hint_dict[tmp[1]][1] + 1, hint_dict[tmp[1]][1])
                     #requesting player
                 else:
-                    hint_dict[tmp[0]] = (hint_dict[tmp[0]][0] + 1, hint_dict[tmp[0]][1], hint_dict[tmp[0]][1] + 1)
+                    hint_dict[tmp[0]] = (hint_dict[tmp[0]][0] + 1, hint_dict[tmp[0]][1], hint_dict[tmp[0]][2] + 1)
                     #finding player
-                    hint_dict[tmp[1]] = (hint_dict[tmp[1]][0], hint_dict[tmp[1]][1] + 1, hint_dict[tmp[1]][1])
+                    hint_dict[tmp[1]] = (hint_dict[tmp[1]][0], hint_dict[tmp[1]][1] + 1, hint_dict[tmp[1]][2])
                     #requesting player
         for key in hint_dict.keys():
             hint_dict["Total"] = (hint_dict["Total"][0]+hint_dict[key][0], hint_dict["Total"][1]+hint_dict[key][1],
