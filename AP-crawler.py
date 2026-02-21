@@ -28,7 +28,8 @@ number BIGINT references Players(player_index), name TEXT, game_name TEXT, check
 
 CREATE TABLE Stats_Total(url_index BIGINT references Trackers(tracker_index), timestamp TIMESTAMP WITH TIME ZONE, 
 number BIGINT references Players(player_index), name TEXT, game_name TEXT, games_done INTEGER, games_total INTEGER, 
-checks_done INTEGER, checks_total INTEGER, percentage REAL,
+checks_done INTEGER, checks_total INTEGER, percentage REAL, hints_found INTEGER, hints_requested INTEGER, hints_total 
+INTEGER,
 connection_status TEXT);
 '''
 sec_30 = 30
@@ -82,6 +83,9 @@ async def add_playerinfo_to_dict(player_dict, info_list, timestamp) -> None:
             'percentage': float(new_player_data[5]),
             'timestamp': timestamp,
             'last_activity': f'{new_player_data[6]//3600}:{(new_player_data[6]//60) % 60}',
+            'hints_found': int(new_player_data[7]),
+            'hints_requested': int(new_player_data[8]),
+            'hints_total': int(new_player_data[9]),
         }
 
 async def add_totalinfo_to_dict(player_dict, info_list, timestamp) -> None:
@@ -100,6 +104,9 @@ async def add_totalinfo_to_dict(player_dict, info_list, timestamp) -> None:
         'last_activity': f'{info_list[6] // 3600}:{(info_list[6] // 60) % 60}',
         'games_done': int(info_list[7][0]),
         'games_total': int(info_list[7][1]),
+        'hints_found': int(info_list[8]),
+        'hints_requested': int(info_list[9]),
+        'hints_total': int(info_list[10]),
     }
 
 
@@ -115,6 +122,9 @@ async def add_old_playerinfo_to_dict(player_dict, info_list) -> None:
             'checks_total': int(player_data[6]),
             'percentage': float(player_data[7]),
             'timestamp': player_data[1],
+            'hints_found': int(player_data[10]),
+            'hints_requested': int(player_data[11]),
+            'hints_total': int(player_data[12]),
         }
 
 async def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
@@ -131,6 +141,9 @@ async def add_old_totalinfo_to_dict(player_dict, info_list) -> None:
             'timestamp': total_data[1],
             'games_done': int(total_data[5]),
             'games_total': int(total_data[6]),
+            'hints_found': int(total_data[12]),
+            'hints_requested': int(total_data[13]),
+            'hints_total': int(total_data[14]),
         }
 
 async def crawl_tracker_from_api(task_index, client, tracker_api_url: str):
@@ -201,18 +214,60 @@ str|int|float]], str, int, float]:
     timestamp = datetime.now(pytz_timezone('Europe/Berlin'))
     time_spend = time.time() - timer
     player_data_dict = {}
+    hint_dict = { "Total": (0, 0, 0) }
     try:
         new_player_data = []
-        for player in tracker_html.find('tbody').contents:
+        check_table = tracker_html.find(id='checks-table')
+        hints_table = tracker_html.find(id='hints-table')
+        for hints in hints_table.find('tbody').contents:
+            tmp = []
+            for hint_data in hints:
+                if isinstance(hint_data, element.Tag):
+                    tmp.append(hint_data.get_text(strip=True))
+            if len(tmp) > 0:
+                if not tmp[0] in hint_dict.keys():
+                    hint_dict[tmp[0]] = (0, 0, 0) #(done, requested, total)
+                if not tmp[1] in hint_dict.keys():
+                    hint_dict[tmp[1]] = (0, 0, 0)  # (done, requested, total)
+                if tmp[6] == "":
+                    hint_dict[tmp[0]] = (hint_dict[tmp[0]][0], hint_dict[tmp[0]][1], hint_dict[tmp[0]][1] + 1)
+                    #finding player
+                    hint_dict[tmp[1]] = (hint_dict[tmp[1]][0], hint_dict[tmp[1]][1] + 1, hint_dict[tmp[1]][1])
+                    #requesting player
+                else:
+                    hint_dict[tmp[0]] = (hint_dict[tmp[0]][0] + 1, hint_dict[tmp[0]][1], hint_dict[tmp[0]][1] + 1)
+                    #finding player
+                    hint_dict[tmp[1]] = (hint_dict[tmp[1]][0], hint_dict[tmp[1]][1] + 1, hint_dict[tmp[1]][1])
+                    #requesting player
+        for key in hint_dict.keys():
+            hint_dict["Total"] = (hint_dict["Total"][0]+hint_dict[key][0], hint_dict["Total"][1]+hint_dict[key][1],
+                                  hint_dict["Total"][2]+hint_dict[key][2])
+            ### each players hint contents look like this
+            # 0 Finding player
+            # 1 Receiving player
+            # 2 Itemname
+            # 3 Location
+            # 4 Game
+            # 5 Entrance
+            # 6 Found/not found
+        for player in check_table.find('tbody').contents:
             tmp = []
             for player_data in player.contents:
                 if isinstance(player_data, element.Tag):
                     tmp.append(player_data.get_text(strip=True))
+            if tmp[1] in hint_dict.keys():
+                tmp.append(hint_dict[tmp[1]][0]) #hints done
+                tmp.append(hint_dict[tmp[1]][1]) #hints requested
+                tmp.append(hint_dict[tmp[1]][2]) #hints total
+            else:
+                tmp.append(0)  # hints done
+                tmp.append(0)  # hints requested
+                tmp.append(0)  # hints total
             new_player_data.append(tmp)
         await add_playerinfo_to_dict(player_data_dict, new_player_data, timestamp)
 
         tmp = [0]
-        for total_data in tracker_html.find('tfoot').contents[1].contents:
+        for total_data in check_table.find('tfoot').contents[1].contents:
             if isinstance(total_data, element.Tag):
                 tmp.append(total_data.get_text(strip=True))
         total_check = tmp[3].split(' ')[0].split('/')
@@ -222,6 +277,9 @@ str|int|float]], str, int, float]:
             tmp[3] = 'Ongoing'
         tmp[6] = 0.0
         tmp.append(total_check)
+        tmp.append(hint_dict['Total'][0]) #hints done
+        tmp.append(hint_dict['Total'][1]) #hints requested
+        tmp.append(hint_dict['Total'][2]) #hints total
         await add_totalinfo_to_dict(player_data_dict, tmp, timestamp)
 
         return True, player_data_dict, tracker_url, task_index, time_spend
@@ -252,10 +310,10 @@ async def crawling_process(unfinished_seeds, old_player_data_per_url, old_total_
                 # print(f"start pushing {task_index}")
                 await main_url_fetch(task_index, url, last_updated, title, checks_done,
                                      old_player_data_per_url[url], old_total_data_per_url[url], player_dict)
-            else:
-                cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
-                               f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
-                db.commit()
+            # else:
+            #     cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+            #                    f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
+            #     db.commit()
         print(f"all crawling tasks processed in {time.time() - timer} seconds")
 
 async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
@@ -315,9 +373,10 @@ async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_t
         push_player = False
         timer = time.time()
         query = ('INSERT INTO Stats (timestamp, url, number, name, game_name, checks_done, checks_total, percentage, '
-                 'connection_status) VALUES ')
+                 'hints_found, hints_requested, hints_total, connection_status) VALUES ')
         query_total = ('INSERT INTO Stats_total (timestamp, url, number, name, game_name, games_done, '
-                       'games_total, checks_done, checks_total, percentage, connection_status) VALUES ')
+                       'games_total, checks_done, checks_total, percentage, hints_found, hints_requested, hints_total, '
+                       'connection_status) VALUES ')
         query_list = []
         query_total_list = []
         for index, data, in capture.items():
@@ -332,28 +391,58 @@ async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_t
                         f"(TIMESTAMP '{data['timestamp'] - timedelta(seconds=30)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, '{old_player_data_dict[index]['name']}', "
                         f"'{old_player_data_dict[index]['game_name']}', "
-                        f" {old_player_data_dict[index]['games_done']},"
+                        f" {old_player_data_dict[index]['games_done']}, "
                         f" {old_player_data_dict[index]['games_total']},"
-                        f" {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
-                        f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}')")
+                        f" {old_player_data_dict[index]['checks_done']}, "
+                        f" {old_player_data_dict[index]['checks_total']}, "
+                        f" {old_player_data_dict[index]['percentage']}, "
+                        f" {old_player_data_dict[index]['hints_found']}, "
+                        f" {old_player_data_dict[index]['hints_requested']}, "
+                        f" {old_player_data_dict[index]['hints_total']}, "
+                        f"'{old_player_data_dict[index]['connection_status']}')")
                 else:  # players
                     query_list.append(
                         f"(TIMESTAMP '{data['timestamp'] - timedelta(seconds=30)}', '{tracker_url}',"
                         f" {old_player_data_dict[index]['number']}, "
                         f"'{old_player_data_dict[index]['name']}', "
-                        f"'{old_player_data_dict[index]['game_name']}', {old_player_data_dict[index]['checks_done']}, {old_player_data_dict[index]['checks_total']},"
-                        f" {old_player_data_dict[index]['percentage']}, '{old_player_data_dict[index]['connection_status']}')")
+                        f"'{old_player_data_dict[index]['game_name']}', "
+                        f"{old_player_data_dict[index]['checks_done']}, "
+                        f"{old_player_data_dict[index]['checks_total']},"
+                        f" {old_player_data_dict[index]['percentage']}, "
+                        f"{old_player_data_dict[index]['hints_found']}, "
+                        f"{old_player_data_dict[index]['hints_requested']}, "
+                        f"{old_player_data_dict[index]['hints_total']}, "
+                        f"'{old_player_data_dict[index]['connection_status']}')")
             if data['name'] == "Total": # total
                 query_total_list.append(
-                    f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
-                    f"'{data['game_name']}', {data['games_done']}, {data['games_total']},"
-                    f"{data['checks_done']}, {data['checks_total']},"
-                    f"{data['percentage']}, '{data['connection_status']}')")
+                    f"(TIMESTAMP '{data['timestamp']}', "
+                    f"'{tracker_url}', "
+                    f"{data['number']}, "
+                    f"'{data['name']}', "
+                    f"'{data['game_name']}', "
+                    f"{data['games_done']}, "
+                    f"{data['games_total']},"
+                    f"{data['checks_done']}, "
+                    f"{data['checks_total']},"
+                    f"{data['percentage']}, "
+                    f"{data['hints_found']}, "
+                    f"{data['hints_requested']}, "
+                    f"{data['hints_total']}, "
+                    f"'{data['connection_status']}')")
                 push_total = True
             else: # players
-                query_list.append(f"(TIMESTAMP '{data['timestamp']}', '{tracker_url}', {data['number']}, '{data['name']}', "
-                                 f"'{data['game_name']}', {data['checks_done']}, {data['checks_total']}, "
-                                 f"{data['percentage']}, '{data['connection_status']}')")
+                query_list.append(f"(TIMESTAMP '{data['timestamp']}', "
+                                f"'{tracker_url}', "
+                                f"{data['number']}, "
+                                f"'{data['name']}', "
+                                f"'{data['game_name']}', "
+                                f"{data['checks_done']}, "
+                                f"{data['checks_total']}, "
+                                f"{data['percentage']}, "
+                                f"{data['hints_found']}, "
+                                f"{data['hints_requested']}, "
+                                f"{data['hints_total']}, "
+                                f"'{data['connection_status']}')")
                 push_player = True
 
         if push_total:
@@ -386,11 +475,13 @@ def create_table_if_needed(db_connector, db_cursor):
                       "room_url BIGINT references Trackers(tracker_index), basename TEXT);")
     db_cursor.execute("CREATE TABLE Stats_Players(url_index BIGINT references Trackers(tracker_index), "
                       "timestamp TIMESTAMP WITH TIME ZONE, number BIGINT references Players(player_index), "
-                      "name TEXT, game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);")
+                      "name TEXT, game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, "
+                      "hints_found INTEGER, hints_requested INTEGER, hints_total INTEGER, connection_status TEXT);")
     db_cursor.execute("CREATE TABLE Stats_Total(url_index BIGINT references Trackers(tracker_index), "
                       "timestamp TIMESTAMP WITH TIME ZONE, number BIGINT references Players(player_index), name TEXT, "
                       "game_name TEXT, games_done INTEGER, games_total (INTEGER, checks_done) INTEGER, checks_total INTEGER, "
-                      "percentage REAL, connection_status TEXT);")
+                      "percentage REAL, hints_found INTEGER, hints_requested INTEGER, hints_total INTEGER, "
+                      "connection_status TEXT);")
     db_connector.commit()
 
 async def new_url_handling(new_url:str, existing_trackers):
@@ -531,6 +622,7 @@ def main():
                 arg_list.append([crawling_process, segments[i], old_player_data_per_url, old_total_data_per_url])
 
             p = pool.map_async(just_start_async, arg_list)
+            # just_start_async(*arg_list)
             p.wait()
                 # p.start()
 
