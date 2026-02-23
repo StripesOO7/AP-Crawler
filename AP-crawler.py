@@ -35,6 +35,7 @@ connection_status TEXT);
 sec_30 = 30
 days_7 = 7*24*60*60 #604800
 process_count =  (os.cpu_count()//2)+1
+# process_count =  1
 
 load_dotenv()
 db_login = {
@@ -310,10 +311,10 @@ async def crawling_process(unfinished_seeds, old_player_data_per_url, old_total_
                 # print(f"start pushing {task_index}")
                 await main_url_fetch(task_index, url, last_updated, title, checks_done,
                                      old_player_data_per_url[url], old_total_data_per_url[url], player_dict)
-            else:
-                cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
-                               f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
-                db.commit()
+            # else:
+            #     cursor.execute(f"UPDATE Trackers SET finished = 'x', end_time = "
+            #                    f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
+            #     db.commit()
         print(f"all crawling tasks processed in {time.time() - timer} seconds")
 
 async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
@@ -611,8 +612,8 @@ def main():
                 arg_list.append([crawling_process, segments[i], old_player_data_per_url, old_total_data_per_url])
 
             p = pool.map_async(just_start_async, arg_list)
-            # just_start_async(*arg_list)
             p.wait()
+            # just_start_async(*arg_list)
                 # p.start()
 
             # async with httpx.AsyncClient() as client:
