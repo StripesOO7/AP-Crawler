@@ -3,7 +3,7 @@ from multiprocessing import Pool, Process
 import os.path
 import time
 from datetime import datetime, timedelta
-from typing import Tuple
+from typing import Any, List, Tuple
 from os import getenv
 from dotenv import load_dotenv
 import json
@@ -29,8 +29,26 @@ number BIGINT references Players(player_index), name TEXT, game_name TEXT, check
 CREATE TABLE Stats_Total(url_index BIGINT references Trackers(tracker_index), timestamp TIMESTAMP WITH TIME ZONE, 
 number BIGINT references Players(player_index), name TEXT, game_name TEXT, games_done INTEGER, games_total INTEGER, 
 checks_done INTEGER, checks_total INTEGER, percentage REAL, hints_found INTEGER, hints_requested INTEGER, hints_total 
-INTEGER,
-connection_status TEXT);
+INTEGER, connection_status TEXT);
+
+CREATE TABLE hints (
+	url TEXT,
+	finding_player, int|str
+	receiving_player, int|str
+	location_name, int|str
+	item_name, int|str
+	found BOOLEAN,
+	entrance TEXT,
+	item_flags, "binary 0b<trap><useful><progression>"
+	status, "int 0-unspecified 10-no-prio 20-avoid 30-prio 40-found"
+	timestamp_issued TIMESTAMP WITH TIME ZONE,
+	timestamp_found TIMESTAMP WITH TIME ZONE
+);
+
+CREATE TABLE Datapackages (checksum BIGINT, itemIDs JSONB, locationIDs JSONB);
+
+CREATE TABLE Hints(url_index BIGINT references Trackers(tracker_index), timestamp TIMESTAMP WITH TIME ZONE, 
+number BIGINT references Players(player_index), name TEXT, game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, connection_status TEXT);
 '''
 sec_30 = 30
 days_7 = 7*24*60*60 #604800
@@ -46,6 +64,19 @@ db_login = {
     "port":getenv('port')
 }
 
+item_flags_lookup = {
+    0b001: "progression",
+    0b010: "useful",
+    0b100: "trap"
+}
+
+hint_status_lookup = {
+    0: "unspecified",
+    10: "no priority",
+    20: "avoid",
+    30: "priority",
+    40: "found"
+}
 client_status_lookup = {
     0: "Disconnected",
     5: "Connected",
@@ -226,6 +257,8 @@ str|int|float]], str, int, float]:
                 if isinstance(hint_data, element.Tag):
                     tmp.append(hint_data.get_text(strip=True))
             if len(tmp) > 0:
+        # API -> ["receiving", "finding_player", "location", "item", "found y/n", "entrance", "itemflag", "status/prio"]
+        # HTML -> ["finding", "receiving", "item", "location", "Game" "entrance", "found y/n"]
                 if not tmp[0] in hint_dict.keys():
                     hint_dict[tmp[0]] = (0, 0, 0) #(done, requested, total)
                 if not tmp[1] in hint_dict.keys():
@@ -316,6 +349,42 @@ async def crawling_process(unfinished_seeds, old_player_data_per_url, old_total_
             #                    f"'{datetime.now(pytz_timezone('Europe/Berlin'))}' WHERE url = '{url}';")
             #     db.commit()
         print(f"all crawling tasks processed in {time.time() - timer} seconds")
+
+def get_datapackages(url:str, existing_datapackages, cursor):# List[str, Any]):
+    new_datapackages = []
+    with httpx.Client() as client:
+        static_api_json_binary = client.get(url.replace("tracker", "api/static_tracker"), timeout=50)
+        static_api_json = json.loads(static_api_json_binary.content.decode('utf-8'))
+
+        for datapackage in static_api_json["datapackage"]:
+            checksum = static_api_json["datapackage"][datapackage]["checksum"]
+
+            if not (checksum,) in existing_datapackages:
+                api_url = f'{url[:url.find("/tracker/")]}/api/datapackage/{checksum}'
+                datapackage_json_binary = client.get(api_url, timeout=50)
+                datapackage_json = json.loads(datapackage_json_binary.content.decode('utf-8'))
+                new_datapackages.append((checksum,datapackage_json))
+
+    if len(new_datapackages) > 0:
+        query = ('INSERT INTO Datapackages (checksum, itemids, locationids) VALUES ')
+        query_list = []
+
+        for new_datapackage in new_datapackages:
+            item_name_to_id = new_datapackage[1]["item_name_to_id"]
+            location_name_to_id = new_datapackage[1]["location_name_to_id"]
+
+            location_ids = {}
+            item_ids = {}
+            for item_name in item_name_to_id:
+                item_ids[item_name_to_id[item_name]] = item_name
+            for location_name in location_name_to_id:
+                location_ids[location_name_to_id[location_name]] = location_name
+            # item_json_dump = json.dumps(item_ids).replace("'", "''")
+            # location_json_dump = json.dumps(location_ids).replace("'", "''")
+            query_list.append(f"('{new_datapackage[0]}', $${json.dumps(item_ids)}$$::jsonb, "
+                              f"$${json.dumps(location_ids)}$$::jsonb)")
+
+        cursor.execute(query + ", ".join(query_list))
 
 async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_title:bool, old_player_data:list,
                      old_total_data:list, capture) -> int:
@@ -472,8 +541,10 @@ async def push_to_db(task_index, db_connector, db_cursor, tracker_url:str, has_t
 def create_table_if_needed(db_connector, db_cursor):
     db_cursor.execute("CREATE TABLE Trackers(tracker_index BIGSERIAL PRIMARY KEY, url TEXT , finished TEXT, "
                       "start_time TIMESTAMP WITH TIME ZONE, end_time TIMESTAMP WITH TIME ZONE, title TEXT);")
+    db_cursor.execute("CREATE TABLE Datapackages(checksum BIGINT PRIMARY KEY, itemIDs JSONB, locationIDs JSONB);")
     db_cursor.execute("CREATE TABLE Players(player_index BIGSERIAL PRIMARY KEY, playernumber INTEGER, "
-                      "room_url BIGINT references Trackers(tracker_index), basename TEXT);")
+                      "room_url BIGINT references Trackers(tracker_index), basename TEXT, datapackage_checksum BIGINT"
+                      "references Datapackages(checksum) );")
     db_cursor.execute("CREATE TABLE Stats_Players(url_index BIGINT references Trackers(tracker_index), "
                       "timestamp TIMESTAMP WITH TIME ZONE, number BIGINT references Players(player_index), "
                       "name TEXT, game_name TEXT, checks_done INTEGER, checks_total INTEGER, percentage REAL, "
@@ -499,8 +570,15 @@ async def new_url_handling(new_url:str, existing_trackers):
         cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url.rstrip()}', "
                        f"TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}', TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
         print(f"added {new_url.rstrip()} to database")
+        db.commit()
+
+        cursor.execute(f"SELECT checksum FROM Datapackages")
+        checksum_list = cursor.fetchall()
+        get_datapackages(new_url, checksum_list, cursor)
+        db.commit()
         await crawling_process([[new_url.rstrip(), datetime.now(pytz_timezone('Europe/Berlin')), "",
                                  0]], {new_url.rstrip():[]},{new_url.rstrip():[]})
+
         db.commit()
         db.close()
     else:
