@@ -557,7 +557,7 @@ def create_table_if_needed(db_connector, db_cursor):
     db_connector.commit()
 
 async def new_url_handling(new_url:str, existing_trackers):
-
+    new_url = new_url.rstrip()
     if "/room/" in new_url:
         room_info = await fetch_tracker_from_room(new_url)
         new_url = f"{new_url.split('/room/')[0]}{room_info[1].get('href')}"
@@ -567,17 +567,17 @@ async def new_url_handling(new_url:str, existing_trackers):
     if "/tracker/" in new_url:
         db = psycopg2.connect(**db_login)
         cursor = db.cursor()
-        cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url.rstrip()}', "
+        cursor.execute(f"INSERT INTO Trackers(url, start_time, last_updated) VALUES ('{new_url}', "
                        f"TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}', TIMESTAMPTZ '{datetime.now(pytz_timezone('Europe/Berlin'))}');")
-        print(f"added {new_url.rstrip()} to database")
+        print(f"added {new_url} to database")
         db.commit()
 
         cursor.execute(f"SELECT checksum FROM Datapackages")
         checksum_list = cursor.fetchall()
         get_datapackages(new_url, checksum_list, cursor)
         db.commit()
-        await crawling_process([[new_url.rstrip(), datetime.now(pytz_timezone('Europe/Berlin')), "",
-                                 0]], {new_url.rstrip():[]},{new_url.rstrip():[]})
+        await crawling_process([[new_url, datetime.now(pytz_timezone('Europe/Berlin')), "",
+                                 0]], {new_url:[]},{new_url:[]})
 
         db.commit()
         db.close()
